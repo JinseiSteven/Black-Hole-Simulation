@@ -10,6 +10,7 @@
 #include "Camera.h"
 #include "Settings.h"
 #include "Config.h"
+#include "Utils.h"
 
 
 class Settings;
@@ -25,11 +26,12 @@ Camera::Camera(
         m_aspect(aspect),
         m_zNear(zNear),
         m_zFar(zFar),
-        m_radius(settings->GetSimRs() * Config::CAMERA_BASE_RADIUS)
+        m_radius(Config::CAMERA_BASE_RADIUS)
 {
-
         m_orbit_sensitivity = settings->GetOrbitSensitivity();
         m_zoom_sensitivity = settings->GetZoomSensitivity();
+        m_min_zoom_distance = settings->GetSimRs() * 1.5f;
+        m_max_zoom_distance = settings->GetSimWorldRadius() * 1.2f;
 
         // setting the initial position based on the radius and starting angles
         const float x = m_target.x + m_radius * std::cos(m_inclination) * std::sin(m_azimuth);
@@ -37,6 +39,7 @@ Camera::Camera(
         const float z = m_target.z + m_radius * std::cos(m_inclination) * std::cos(m_azimuth);
         m_position = glm::vec3(x, y, z);
 
+        UpdatePositionSpherical();
         setOrthonormalBases();
         UpdateInvProjectionMatrix();
         UpdateInvViewMatrix();
@@ -51,7 +54,17 @@ void Camera::ProcessMouseMovement(float xoffset, float yoffset) {
         m_inclination += yoffset * m_orbit_sensitivity;
         m_inclination = std::clamp(m_inclination, -MAX_INCLINATION, MAX_INCLINATION);
 
-        // TODO radius, to be done with the scrollwheel thingything
+        const float x = m_target.x + m_radius * std::cos(m_inclination) * std::sin(m_azimuth);
+        const float y = m_target.y + m_radius * std::sin(m_inclination);
+        const float z = m_target.z + m_radius * std::cos(m_inclination) * std::cos(m_azimuth);
+
+        SetPosition(glm::vec3(x, y, z));
+}
+
+void Camera::ProcessZoom(float yoffset) {
+        m_radius *= std::pow(1.1f, -yoffset * m_zoom_sensitivity);
+
+        m_radius = std::clamp(m_radius, m_min_zoom_distance, m_max_zoom_distance);
 
         const float x = m_target.x + m_radius * std::cos(m_inclination) * std::sin(m_azimuth);
         const float y = m_target.y + m_radius * std::sin(m_inclination);
@@ -63,6 +76,7 @@ void Camera::ProcessMouseMovement(float xoffset, float yoffset) {
 void Camera::SetPosition(const glm::vec3& position) {
         m_position = position;
         setOrthonormalBases();
+        UpdatePositionSpherical();
         m_viewDirty = true;
         m_viewProjectionDirty = true;
 }
@@ -127,6 +141,10 @@ glm::mat4 Camera::GetProjectionMatrix() const {
 
 glm::mat4 Camera::GetViewProjectionMatrix() const {
         return glm::inverse(GetInvViewProjectionMatrix());
+}
+
+void Camera::UpdatePositionSpherical() {
+        m_position_spherical = Utils::cartesianToSpherical(m_position);
 }
 
 void Camera::UpdateInvViewMatrix() const {

@@ -27,6 +27,7 @@ set(SOURCES
         src/Settings.cpp
         src/Shader.cpp
         src/Simulation.cpp
+        src/Utils.cpp
 )
 
 add_executable(black_hole_simulation ${SOURCES})

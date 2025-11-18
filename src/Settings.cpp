@@ -2,12 +2,11 @@
 // Created by StephanVisser on 11/13/2025.
 //
 
-#include "../include/Settings.h"
+#include "Settings.h"
 
 #include "Config.h"
 
 Settings::Settings() :
-    m_physics_dirty(false),
     m_render_dirty(false)
 {
     // we build the meters to sim units conversion (this way we can calculate with floats instead of doubles)
@@ -17,6 +16,18 @@ Settings::Settings() :
     m_simulation.black_hole_mass_kg = Config::DEFAULT_BLACK_HOLE_MASS;
     m_simulation.max_ray_steps = Config::DEFAULT_MAX_RAY_STEPS;
     m_simulation.ray_step_size = Config::DEFAULT_RAY_STEP_SIZE;
+
+    // setting all the default accretion disk params (hell of a lot of em)
+    m_disk.inner_radius = Config::DISK_INNER_RADIUS_RS;
+    m_disk.outer_radius = Config::DISK_OUTER_RADIUS_RS;
+    m_disk.min_height = Config::DISK_MIN_HEIGHT;
+    m_disk.max_height = Config::DISK_MAX_HEIGHT;
+    m_disk.renderMode = Config::DISK_RENDER_MODE;
+    m_disk.absorptionCoeff = Config::DISK_ABSORPTION_COEFFICIENT;
+    m_disk.maxMarchSteps = Config::DISK_MAX_MARCH_STEPS;
+    m_disk.marchStepSize = Config::DISK_MARCH_STEP_SIZE;
+    m_disk.colorHot = Config::DISK_COLOR_HOT;
+    m_disk.colorCool = Config::DISK_COLOR_COOL;
 
     // also initializing some rendering settings up front
     m_render.render_scale = Config::RENDER_SCALE;
@@ -38,7 +49,7 @@ void Settings::SetBlackHoleMass(const double mass_kg) {
     if (std::abs(m_simulation.black_hole_mass_kg - mass_kg) > 1e-10) {
         m_simulation.black_hole_mass_kg = mass_kg;
         RecalculateRs();
-        m_physics_dirty = true;
+        m_simulation_version++;
     }
 }
 
@@ -76,7 +87,60 @@ void Settings::SetRadialMeshOpacity(const float opacity) {
 void Settings::SetMaxRaySteps(const int steps) {
     if (m_simulation.max_ray_steps != steps) {
         m_simulation.max_ray_steps = steps;
-        m_physics_dirty = true;
+        m_simulation_version++;
+    }
+}
+
+void Settings::SetRayStepSize(const float step_size) {
+    if (m_simulation.ray_step_size != step_size) {
+        m_simulation.ray_step_size = step_size;
+        m_simulation_version++;
+    }
+}
+
+void Settings::SetDiskRadii(const float inner_radius, const float outer_radius) {
+    if (m_disk.inner_radius != inner_radius || m_disk.outer_radius != outer_radius) {
+        m_disk.inner_radius = inner_radius;
+        m_disk.outer_radius = outer_radius;
+        m_disk_version++;
+    }
+}
+
+void Settings::SetDiskHeight(const float min_height, const float max_height) {
+    if (m_disk.min_height != min_height || m_disk.max_height != max_height) {
+        m_disk.min_height = min_height;
+        m_disk.max_height = max_height;
+        m_disk_version++;
+    }
+}
+
+void Settings::SetDiskRenderMode(const unsigned int mode) {
+    if (m_disk.renderMode != mode) {
+        m_disk.renderMode = mode;
+        m_disk_version++;
+    }
+}
+
+void Settings::SetDiskAbsorptionCoefficient(const float coefficient) {
+    if (m_disk.absorptionCoeff != coefficient) {
+        m_disk.absorptionCoeff = coefficient;
+        m_disk_version++;
+    }
+}
+
+void Settings::SetDiskMarchSettings(const unsigned int max_march_steps, const float march_step_size) {
+    if (m_disk.maxMarchSteps != max_march_steps || m_disk.marchStepSize != march_step_size) {
+        m_disk.maxMarchSteps = max_march_steps;
+        m_disk.marchStepSize = march_step_size;
+        m_disk_version++;
+    }
+}
+
+void Settings::SetDiskColors(const glm::vec4 color_cool, const glm::vec4 color_hot) {
+    if (m_disk.colorCool != color_cool || m_disk.colorHot != color_hot) {
+        m_disk.colorCool = color_cool;
+        m_disk.colorHot = color_hot;
+        m_disk_version++;
     }
 }
 
@@ -115,13 +179,6 @@ double Settings::GetMetersPerSimUnit() const {
 
 double Settings::GetBlackHoleMass() const {
     return m_simulation.black_hole_mass_kg;
-}
-
-// change consumers
-bool Settings::ConsumePhysicsChanges() const {  // TODO, check whether actually necessary???
-    bool changed = m_physics_dirty;
-    m_physics_dirty = false;
-    return changed;
 }
 
 bool Settings::ConsumeRenderChanges() const {

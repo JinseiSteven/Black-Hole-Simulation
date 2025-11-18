@@ -21,6 +21,7 @@ public:
         const std::shared_ptr<Settings>& settings
         );
 
+    void ProcessZoom(float yoffset);
     void ProcessMouseMovement(float xoffset, float yoffset);
 
     void SetPosition(const glm::vec3& position);
@@ -36,6 +37,7 @@ public:
     glm::mat4 GetProjectionMatrix() const;
     glm::mat4 GetViewProjectionMatrix() const;
     const glm::vec3& GetPosition() const { return m_position; }
+    const glm::vec3& GetPositionSpherical() const { return m_position_spherical; }
 
 private:
     // cant get it all the way exactly to 90 degrees or well get gimbal lock (yaw and roll will be the same)
@@ -54,9 +56,12 @@ private:
     // decouple into x, y and zoom sensitivities
     float m_orbit_sensitivity;
     float m_zoom_sensitivity;
+    float m_min_zoom_distance;
+    float m_max_zoom_distance;
 
     // we instantiate the camera to be at the origin facing the -z direction
     glm::vec3 m_position{0.0f, 0.0f, 0.0f};
+    glm::vec3 m_position_spherical{0.0f, 0.0f, 0.0f};
     glm::vec3 m_target{0.0f, 0.0f, 0.0f};
 
     glm::vec3 m_forward{0.0f, 0.0f, -1.0f};
@@ -71,6 +76,7 @@ private:
     mutable glm::mat4 m_invProjectionMatrix{glm::mat4(1.0f)};
     mutable glm::mat4 m_invViewProjectionMatrix{glm::mat4(1.0f)};
 
+    void UpdatePositionSpherical();
     void setOrthonormalBases();
     void UpdateInvViewMatrix() const;
     void UpdateInvProjectionMatrix() const;

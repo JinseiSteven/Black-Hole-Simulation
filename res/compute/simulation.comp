@@ -5,47 +5,348 @@ layout (local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
 layout(rgba8, binding = 0) uniform image2D imgOutput;
 
-uniform mat4 invProjectionMatrix;          // TODO change this to already have em combined, quicker
-uniform mat4 invViewMatrix;
-uniform vec3 camPos;
+layout(std140, binding = 1) uniform Camera {
+    mat4 invProjectionMatrix;
+    mat4 invViewMatrix;
+    vec4 PosCartesian;
+} camera;
 
-uniform int maxStepCount;
-uniform float stepSize;
-uniform float Rs;
-uniform float worldRadius;
+layout(std140, binding = 2) uniform SimSettings {
+    int maxStepCount;
+    float stepSize;
+    float Rs;
+    float worldRadius;
+} sim;
+
+layout(std140, binding = 3) uniform DiskSettings {
+    float innerRadius;
+    float outerRadius;
+    float minHeight;
+    float maxHeight;
+    int renderMode;        // 0=flat, 1=angle, 2=raymarching
+    float absorptionCoeff;
+    int maxMarchSteps;
+    float marchStepSize;
+    vec4 colorHot;
+    vec4 colorCool;
+} disk;
+
+layout(std140, binding = 4) uniform Planets {
+    int numPlanets;
+    vec4 planets[64];  // xyz = position, w = radius
+} planets;
+
+const float ONESIXTH = 1.0f / 6.0f;
+const float PI = 3.14159265;
 
 
-void stepRay(inout vec3 rayPos, inout vec3 rayDir) {
-    // TODO Temporary single straight step
-    rayPos += rayDir * stepSize;
+struct Derivatives {
+    float dr_dl;    // signed radial velocity
+    float dpsi_dl;  // angular velocity
+};
+
+struct RayState {
+
+    // now, normally we would represent the vector in polar coordinates with theta, phi and r
+    // however, due to our spherical symmetry assumption, we represent the trajectory of the
+    // light ray on a 2D orbital plane. Which we can represent with a single angle psi and a radius r
+    // See notes on Conservation Laws for further explanation.
+    float r;
+    float psi;
+
+    // identifier to check whether the square root of the radial velocity differential is positive or negative
+    float radial_sign;
+
+    // vectors identifying the orbital plane which contains the full trajectory of the light ray
+    vec3 orbitalPlaneN;
+    vec3 orbitalPlaneU;
+    vec3 orbitalPlaneV;
+
+    // conserved values
+    float E;
+    float L;
+    float E2;
+    float L2;
+};
+
+RayState initRay(vec3 pos, vec3 dir) {
+    RayState ray;
+
+    ray.r = length(pos);
+
+    // since we choose our own 2D orbital plane, we assume the vector starts at the psi pole
+    ray.psi = 0.0f;
+
+    vec3 rayCross = cross(pos, dir);
+
+    // simplified assumption, doesnt calculate correct time, but doesnt alter the final output image
+    // See notes for time-consistent E derivation.
+    ray.E = 1.0f;
+    ray.L = length(rayCross);
+    ray.E2 = ray.E * ray.E;
+    ray.L2 = ray.L * ray.L;
+
+    // the radial sign should initially always be -1, since all rays start moving towards the black hole
+    ray.radial_sign = -1.0f;
+
+    ray.orbitalPlaneN = normalize(rayCross);
+    ray.orbitalPlaneU = normalize(pos);
+    ray.orbitalPlaneV = cross(ray.orbitalPlaneN, ray.orbitalPlaneU);
+
+    return ray;
 }
 
-bool CheckIntersection(vec3 rayPos, out vec4 finalColor) {
+Derivatives getDerivatives(float r, float L, float L2, float E2, inout float radial_sign) {
+    Derivatives derivatives;
 
-    // TODO Temporary red planet
-    if (distance(rayPos, vec3(0.0, 0.0, 0.0)) < 2.0) {
-        finalColor = vec4(1.0, 0.0, 0.0, 1.0);
+    float r_inv = 1.0f / r;
+    float r_inv_sq = r_inv * r_inv;
+
+    derivatives.dpsi_dl = L * r_inv_sq;
+
+    float dr_dl_squared = E2 - ((1.0f - sim.Rs * r_inv) * (L2 * r_inv_sq));
+
+    // bounce logic, when the direction of the radial velocity changes (starts moving away from the black hole)
+    if (dr_dl_squared < 0.0f) {
+
+        // we only change the direction a single time, since it wont return later on
+        if (radial_sign < 0.0f) {
+            radial_sign = 1.0f;
+        }
+
+        derivatives.dr_dl = radial_sign * sqrt(abs(dr_dl_squared));
+    } else {
+        derivatives.dr_dl = radial_sign * sqrt(dr_dl_squared);
+    }
+
+    return derivatives;
+}
+
+void stepRay(inout RayState ray) {
+    const float step_factor = 0.5f;
+    const float min_step = 0.001f;
+    const float max_step = 0.5f;
+    const float L_epsilon = 1e-6f;
+
+    float h = (ray.r / (ray.L + L_epsilon)) * step_factor;
+    h = clamp(h, min_step, max_step);
+
+    float L = ray.L;
+    float L2 = ray.L2;
+    float E2 = ray.E2;
+
+    // k1
+    Derivatives k1 = getDerivatives(ray.r, L, L2, E2, ray.radial_sign);
+
+    // k2
+    float r_k1 = ray.r + 0.5 * h * k1.dr_dl;
+    Derivatives k2 = getDerivatives(r_k1, L, L2, E2, ray.radial_sign);
+
+    // k3
+    float r_k2 = ray.r + 0.5 * h * k2.dr_dl;
+    Derivatives k3 = getDerivatives(r_k2, L, L2, E2, ray.radial_sign);
+
+    // k4
+    float r_k3 = ray.r + h * k3.dr_dl;
+    Derivatives k4 = getDerivatives(r_k3, L, L2, E2, ray.radial_sign);
+
+    float dr_dl = ONESIXTH * (k1.dr_dl + 2 * k2.dr_dl + 2 * k3.dr_dl + k4.dr_dl);
+    float dpsi_dl = ONESIXTH * (k1.dpsi_dl + 2 * k2.dpsi_dl + 2 * k3.dpsi_dl + k4.dpsi_dl);
+
+    ray.r += h * dr_dl;
+    ray.psi += h * dpsi_dl;
+}
+
+vec3 getCartesian(RayState ray) {
+    float u_len = cos(ray.psi) * ray.r;
+    float v_len = sin(ray.psi) * ray.r;
+    return ray.orbitalPlaneU * u_len + ray.orbitalPlaneV * v_len;
+}
+
+// TODO change
+float getDiskHeight(float r_disk) {
+
+    if (r_disk < disk.innerRadius || r_disk > disk.outerRadius) {
+        return 0.0;
+    }
+
+    // power-law flaring: H(r) = H0 * (r/r_inner)^beta
+    float beta = 1.2;  // Typical for accretion disks
+    float H = disk.minHeight * pow(r_disk / disk.innerRadius, beta);
+
+    // taper off at the end, so no sharp cutoff
+    float taper = 1.0 - smoothstep(disk.outerRadius * 0.8, disk.outerRadius, r_disk);
+
+    return H * taper;
+}
+
+bool checkDiskFlat(vec3 rayPos, vec3 prevPos, out vec4 finalColor) {
+    // we check whether the position change between a positive and negative y
+    if (rayPos.y * prevPos.y >= 0.0) {
+        return false;
+    }
+
+    // solve for t in order to get exact point of crossing
+    float t = prevPos.y / (prevPos.y - rayPos.y);
+    vec3 crossPoint = mix(prevPos, rayPos, t);
+
+    float r_disk = length(crossPoint.xz);
+
+    // if falling outside the disk radii, we can ignore
+    if (r_disk < disk.innerRadius || r_disk > disk.outerRadius) {
+        return false;
+    }
+
+    // temperature based color
+    float T_linear = 1.0 - (r_disk - disk.innerRadius) / (disk.outerRadius - disk.innerRadius);
+    T_linear = clamp(T_linear, 0.0, 1.0);
+    vec3 color = mix(disk.colorCool.rgb, disk.colorHot.rgb, T_linear);
+
+    finalColor = vec4(color, 1.0);
+    return true;
+}
+
+bool checkDiskAngleBased(vec3 rayPos, vec3 prevPos, out vec4 finalColor) {
+    float r_disk = length(rayPos.xz);
+    float H = getDiskHeight(r_disk);
+
+    // checking if the ray falls within the disk height at radius r
+    if (abs(rayPos.y) < H) {
+        float T_linear = 1.0 - (r_disk - disk.innerRadius) / (disk.outerRadius - disk.innerRadius);
+        T_linear = clamp(T_linear, 0.0, 1.0);
+
+        vec3 color = mix(disk.colorCool.rgb, disk.colorHot.rgb, T_linear);
+
+        // next, we want to fade out the edge of the black-hole
+        float normalized_r = (r_disk - disk.innerRadius) / (disk.outerRadius - disk.innerRadius);
+        float edge_fade = 1.0 - smoothstep(0.7, 1.0, normalized_r);
+
+        // however when looking at it from the side, we wan to compensate with extra opacity since the disk is a volumetric cloud
+        vec3 rayStep = rayPos - prevPos;
+        float cos_angle = abs(rayStep.y) / length(rayStep);
+
+        float opacity = mix(1.0, edge_fade, cos_angle);
+
+        finalColor = vec4(color, opacity);
         return true;
     }
 
-    vec3 greenSpherePos = vec3(1.0, 0.0, -5.0);
-    float greenSphereRadius = 1.0f;
-    if (distance(rayPos, greenSpherePos) < greenSphereRadius) {
-        finalColor = vec4(0.0, 1.0, 0.0, 1.0); // Green
-        return true; // Hit!
-    }
-
-    // need to assign value due to the out keyword
     finalColor = vec4(0.0);
     return false;
 }
 
+bool checkDiskRaymarching(vec3 entryPos, inout RayState ray, out vec4 finalColor) {
+    // accumulated color values
+    vec4 accumulated = vec4(0.0);
+
+    for (int i = 0; i < disk.maxMarchSteps; i++) {
+        vec3 pos = getCartesian(ray);
+        float r_disk = length(pos.xz);
+        float H = getDiskHeight(r_disk);
+
+        // early check to see whether we leave the disk, in which case we can stop raymarching
+        if (r_disk < disk.innerRadius || r_disk > disk.outerRadius || abs(pos.y) > H) {
+            break;
+        }
+
+        // vertical density corresponds to the idea that the density of our accretion disk
+        // is the highest at the center (y=0) and slowly becomes less dense both upwards and downwards
+        float vertical_density = 1.0 - (abs(pos.y) / H);
+        vertical_density = vertical_density * vertical_density;
+
+        // radial density we use here in order to get the disk to fade out as it nears its inner or outer radial edge
+        float normalized_r = (r_disk - disk.innerRadius) / (disk.outerRadius - disk.innerRadius);
+        float radial_density = 1.0 - smoothstep(0.8, 1.0, normalized_r);
+
+        float density = vertical_density * radial_density;
+
+        if (density > 0.01) {
+            float T_linear = 1.0 - normalized_r;
+            vec3 color = mix(disk.colorCool.rgb, disk.colorHot.rgb, T_linear);
+
+            // Beer-lambert law for light absorption, calculates the amount of light absorbed vs passed through
+            float step_opacity = 1.0 - exp(-density * disk.absorptionCoeff * disk.marchStepSize);
+
+            accumulated.rgb += color * step_opacity * (1.0 - accumulated.a);
+            accumulated.a += step_opacity * (1.0 - accumulated.a);
+
+            if (accumulated.a > 0.99) {
+                accumulated.a = 1.0;
+                break;
+            }
+        }
+
+        stepRay(ray);
+    }
+
+    finalColor = accumulated;
+    return accumulated.a > 0.01;
+}
+
+bool checkDiskIntersection(inout RayState ray, vec3 pos, vec3 prevPos, out vec4 finalColor) {
+    // flat disk
+    if (disk.renderMode == 0) {
+        return checkDiskFlat(pos, prevPos, finalColor);
+    }
+    // volumetric and angle-based opacity
+    else if (disk.renderMode == 1) {
+        return checkDiskAngleBased(pos, prevPos, finalColor);
+    }
+    // volumetric raymarching
+    else if (disk.renderMode == 2) {
+        float r_disk = length(pos.xz);
+        float H = getDiskHeight(r_disk);
+        if (r_disk >= disk.innerRadius && r_disk <= disk.outerRadius && abs(pos.y) < H) {
+            return checkDiskRaymarching(pos, ray, finalColor);
+        }
+        return false;
+    }
+
+    return false;
+}
+
+bool checkPlanetIntersection(vec3 pos, out vec4 finalColor) {
+    for (int i = 0; i < planets.numPlanets; i++) {
+        vec4 planet = planets.planets[i];
+        if (distance(pos, planet.xyz) < planet.w) {
+            finalColor = vec4(0.0f, 0.0f, 1.0f, 1.0f);
+            return true;
+        }
+    }
+}
+
 vec4 traceRay(vec3 rayPos, vec3 rayDir) {
     // the initial ray will have alpha of zero so it is completely seethrough
-    vec4 finalColor = vec4(0.0f, 0.0f, 0.0f, 0.0f);
-    for (int i = 0; i < maxStepCount; i++) {
-        stepRay(rayPos, rayDir);
-        if (CheckIntersection(rayPos, finalColor)) {
+    vec4 finalColor = vec4(1.0f, 0.0f, 0.0f, 0.5f);
+
+    RayState ray = initRay(rayPos, rayDir);
+    vec3 prevPos = rayPos;
+
+    // TODO we can also check what objects we actually intersect with, by checking if they intersect the plane
+
+    for (int i = 0; i < sim.maxStepCount; i++) {
+        stepRay(ray);
+        vec3 pos = getCartesian(ray);
+
+        // case 1: hit the black hole
+        if (ray.r < sim.Rs) {
+            return vec4(0.0, 0.0, 0.0, 1.0);
+        }
+
+        // case 2: hit the accretion disk
+        if (checkDiskIntersection(ray, pos, prevPos, finalColor)) {
+            break;
+        }
+
+        // case 3: hit a planet
+        if (checkPlanetIntersection(pos, finalColor)) {
+            break;
+        }
+
+        prevPos = pos;
+
+        // case 4: ray out of bounds, so just emptiness
+        if (ray.r > sim.worldRadius) {
             break;
         }
     }
@@ -76,14 +377,14 @@ void main()
 
     // now to go from clip space to view space, using our inverse projection matrix
     // and from view space to world space using our inverse view matrix (rigidbody transformation)
-    vec4 homogRayWorld = invViewMatrix * invProjectionMatrix * rayClip;
+    vec4 homogRayWorld = camera.invViewMatrix * camera.invProjectionMatrix * rayClip;
     vec3 rayWorld = homogRayWorld.xyz / homogRayWorld.w;
 
     // now to get the direction of the vector, starting from the camera center
-    vec3 rayDir = normalize(rayWorld - camPos);
+    vec3 rayDir = normalize(rayWorld - camera.PosCartesian.xyz);
 
     // now we have the pixelposition in world space, we can pass this into our function to shoot our ray and return a color
-    vec4 finalColor = traceRay(camPos, rayDir);
+    vec4 finalColor = traceRay(camera.PosCartesian.xyz, rayDir);
 
     imageStore(imgOutput, texelCoord, finalColor);
 }

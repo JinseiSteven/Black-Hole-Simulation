@@ -13,7 +13,7 @@
 #include <Simulation.h>
 #include <Renderer.h>
 #include <Settings.h>
-#include <ComputeShader.h>
+#include <Utils.h>
 
 
 RayTraceEngine::RayTraceEngine() : RayTraceEngine(BASE_SCREEN_WIDTH, BASE_SCREEN_HEIGHT) {}
@@ -43,6 +43,7 @@ RayTraceEngine::RayTraceEngine(const int width, const int height) :
     input_handler = std::make_unique<InputHandler>(window, camera.get());
     glfwSetMouseButtonCallback(window, InputHandler::MouseButtonCallbackWrapper);
     glfwSetCursorPosCallback(window, InputHandler::CursorPosCallbackWrapper);
+    glfwSetKeyCallback(window, InputHandler::KeyCallbackWrapper);
 
     // setting up both the renderer and simulation
     // (renderer first, since the simulation needs the correct output texture id)
@@ -62,6 +63,8 @@ RayTraceEngine::RayTraceEngine(const int width, const int height) :
         renderer->GetScreenTextureID(),
         Config::COMPUTE_SIM.c_str()
         );
+
+    simulation->UpdatePlanetsData(Utils::LoadPlanetsFromFile(Config::PLANETS_TXT_FILE));
 
     renderer->RebuildRadialMesh(
         settings->GetRadialMeshRings(),
