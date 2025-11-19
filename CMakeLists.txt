@@ -28,6 +28,7 @@ set(SOURCES
         src/Shader.cpp
         src/Simulation.cpp
         src/Utils.cpp
+        external/stb_image/stb_impl.cpp
 )
 
 add_executable(black_hole_simulation ${SOURCES})
@@ -36,4 +37,5 @@ target_link_libraries(black_hole_simulation PRIVATE ${DEPS})
 # adding our include folder
 target_include_directories(black_hole_simulation PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/external/stb_image
 )

@@ -14,6 +14,7 @@ namespace Config {
     const std::string SHADER_PATH = "res/shaders/";
     const std::string COMPUTE_PATH = "res/compute/";
     const std::string PLANETS_PATH = "res/planets/";
+    const std::string TEXTURE_PATH = "res/textures/";
     constexpr int START_WIDTH = 800;
     constexpr int START_HEIGHT = 600;
 
@@ -72,9 +73,12 @@ namespace Config {
 
     // the amount of steps the rays for the raytracer will take
     constexpr int DEFAULT_MAX_RAY_STEPS = 10000;
-    constexpr float DEFAULT_RAY_STEP_SIZE = 1.0f; // in s u (so every step is the amount of lightseconds)
+    constexpr float DEFAULT_RAY_STEP_SIZE = 1.0f; // in su (so every step is the amount of lightseconds)
 
     const std::string PLANETS_TXT_FILE = PLANETS_PATH + "base_planets.txt";
+    const int PLANET_TEXTURE_WIDTH = 512;   // px
+    const int PLANET_TEXTURE_HEIGHT = 256;  // px
+    const int MAX_TEXTURE_COUNT = 16;
 
     // ==================== Rendering ====================
     // decides in what resolution we show the simulation (so we can upscale? Like, if its 2 then 4 pixels use 1 ray)
@@ -93,8 +97,7 @@ namespace Config {
 
     // ==================== Debug/UI ====================
     // constexpr bool ENABLE_DEBUG_UI = true;   // TODO soon
-    constexpr float DEFAULT_GRID_OPACITY = 0.5f;
-    constexpr bool DEFAULT_GRID_ENABLED = true;
+    constexpr glm::vec4 DEFAULT_GRID_COLOR = glm::vec4(1.0f, 1.0f, 1.0f, 0.5f);
 }
 
 #endif //BLACK_HOLE_SIMULATION_CONFIG_H

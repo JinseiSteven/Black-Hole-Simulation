@@ -7,9 +7,12 @@
 
 #pragma once
 
+#include <map>
 #include <memory>
 #include <vector>
 #include <glm/glm.hpp>
+
+#include "Utils.h"
 
 class ComputeShader;
 class Camera;
@@ -61,8 +64,9 @@ public:
     // stepping function which will calculate the next step in the simulation
     void step(const Camera* camera);
 
-    void UpdatePlanetsData(const std::vector<glm::vec4>& planetData) const;
-    [[nodiscard]] std::vector<float>& GetRadialHeightMap() const;
+    void UpdatePlanetsData(const std::vector<Utils::PlanetData>& planetData) const;
+    void UpdateRadialHeightMap(int num_rings, float inner_radius, float outer_radius) const;
+    [[nodiscard]] std::vector<float>& GetRadialHeightMap() const { return m_radial_height_map; }
 
 private:
     const std::shared_ptr<Settings> m_settings;
@@ -73,19 +77,22 @@ private:
 
     // vector representing the height map of the perspective grid (row-major)
     mutable std::vector<float> m_radial_height_map;
-    mutable bool m_height_map_dirty{true};
 
     // scientific variables
     mutable float m_Rs{0};
     mutable bool m_Rs_dirty{true};
 
-    std::unique_ptr<ComputeShader> compute_shader;
+    std::unique_ptr<ComputeShader> m_compute_shader;
     unsigned int output_texture_id;
 
     unsigned int cameraUBO{0}, simUBO{0}, diskUBO{0}, planetUBO{0};
 
+    std::map<std::string, int> m_textureMap;
+    unsigned int planet_texture_array_id{0};
+
     void initUniformBuffers();
-    void UpdateRadialHeightMap() const;
+    void initTextureArray(int width, int height, int depth);
+    void initPlanetTextures();
 };
 
 

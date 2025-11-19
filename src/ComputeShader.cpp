@@ -8,7 +8,7 @@
 #include <sstream>
 #include <iostream>
 
-#include "../include/ComputeShader.h"
+#include "ComputeShader.h"
 
 ComputeShader::ComputeShader(const char* computePath) {
     std::string computeCode;
@@ -101,4 +101,9 @@ void ComputeShader::SetVec3(const std::string& name, const glm::vec3& value) con
 void ComputeShader::SetVec2(const std::string& name, const glm::vec2& value) const {
     const GLint location = glGetUniformLocation(ID, name.c_str());
     glUniform2fv(location, 1, glm::value_ptr(value));
+}
+
+void ComputeShader::Set1iv(const std::string& name, const std::vector<int>& value) const {
+    const GLint location = glGetUniformLocation(ID, name.c_str());
+    glUniform1iv(location, static_cast<GLsizei>(value.size()), value.data());
 }

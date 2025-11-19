@@ -17,22 +17,6 @@ class Simulation;
 class Camera;
 
 class RayTraceEngine {
-    GLFWwindow* window{nullptr};
-
-    // some constants
-    static constexpr int BASE_SCREEN_WIDTH = 800;
-    static constexpr int BASE_SCREEN_HEIGHT = 600;
-
-    unsigned int screen_width{BASE_SCREEN_WIDTH}, screen_height{BASE_SCREEN_HEIGHT};
-
-    std::shared_ptr<Settings> settings;
-    std::unique_ptr<Camera> camera;
-    std::unique_ptr<InputHandler> input_handler;
-    std::unique_ptr<Simulation> simulation;
-    std::unique_ptr<Renderer> renderer;
-
-    void GL_init();
-    [[nodiscard]] bool check_render_scale(float render_scale) const;
 public:
     RayTraceEngine();
     RayTraceEngine(int width, int height);
@@ -51,6 +35,24 @@ public:
     [[nodiscard]] InputHandler* GetInputHandler() const { return input_handler.get(); }
     [[nodiscard]] Simulation* GetSimulation() const { return simulation.get(); }
     [[nodiscard]] Renderer* GetRenderer() const { return renderer.get(); }
+private:
+    GLFWwindow* window{nullptr};
+
+    // some constants
+    static constexpr int BASE_SCREEN_WIDTH = 800;
+    static constexpr int BASE_SCREEN_HEIGHT = 600;
+
+    unsigned int screen_width{BASE_SCREEN_WIDTH}, screen_height{BASE_SCREEN_HEIGHT};
+
+    std::shared_ptr<Settings> settings;
+    std::unique_ptr<Camera> camera;
+    std::unique_ptr<InputHandler> input_handler;
+    std::unique_ptr<Simulation> simulation;
+    std::unique_ptr<Renderer> renderer;
+
+    void GL_init();
+    void rebuildRadialMesh() const;
+    [[nodiscard]] bool check_render_scale(float render_scale) const;
 };
 
 #endif //BLACK_HOLE_SIMULATION_ENGINE_H

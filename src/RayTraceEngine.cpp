@@ -63,14 +63,10 @@ RayTraceEngine::RayTraceEngine(const int width, const int height) :
         renderer->GetScreenTextureID(),
         Config::COMPUTE_SIM.c_str()
         );
-
+    
     simulation->UpdatePlanetsData(Utils::LoadPlanetsFromFile(Config::PLANETS_TXT_FILE));
 
-    renderer->RebuildRadialMesh(
-        settings->GetRadialMeshRings(),
-        settings->GetRadialMeshSpokes(),
-        settings->GetRadialMeshInnerRadius(),
-        settings->GetRadialMeshOuterRadius());
+    rebuildRadialMesh();
 }
 
 void RayTraceEngine::GL_init() {
@@ -110,6 +106,25 @@ void RayTraceEngine::GL_init() {
     glViewport(0, 0, static_cast<int>(screen_width), static_cast<int>(screen_height));
 }
 
+void RayTraceEngine::rebuildRadialMesh() const {
+    const int num_rings = settings->GetRadialMeshRings();
+    const float inner_radius = settings->GetRadialMeshInnerRadius();
+    const float outer_radius = settings->GetRadialMeshOuterRadius();
+
+    simulation->UpdateRadialHeightMap(
+        num_rings,
+        inner_radius,
+        outer_radius);
+    renderer->RebuildRadialMesh(
+        num_rings,
+        settings->GetRadialMeshSpokes(),
+        inner_radius,
+        outer_radius);
+
+    renderer->UpdateRadialHeightmap(simulation->GetRadialHeightMap());
+}
+
+
 bool RayTraceEngine::check_render_scale(const float render_scale) const{
     // need to round the pixels up
     int trace_width = static_cast<int>(std::round(static_cast<float>(screen_width) * render_scale));
@@ -132,19 +147,13 @@ void RayTraceEngine::step() {
     glfwPollEvents();
 
     if (settings->ConsumeRenderChanges()) {
-        renderer->RebuildRadialMesh(
-            settings->GetRadialMeshRings(),
-            settings->GetRadialMeshSpokes(),
-            settings->GetRadialMeshInnerRadius(),
-            settings->GetRadialMeshOuterRadius());
+        rebuildRadialMesh();
     }
 
     // TODO handling input is done via callbacks, we could do some force based movement though
 
     // simulating
     simulation->step(camera.get());
-
-    renderer->UpdateRadialHeightmap(simulation->GetRadialHeightMap());
 
     // rendering
     renderer->draw();

@@ -6,12 +6,15 @@
 #include <fstream>
 #include <sstream>
 #include <iostream>
+#include <filesystem>
+#include <vector>
+#include <string>
 
 #include "Utils.h"
 
+namespace fs = std::filesystem;
 
 namespace Utils {
-
     glm::vec3 cartesianToSpherical(const glm::vec3& pos) {
         const float r = glm::length(pos);
         if (r < 0.0001f) {
@@ -40,8 +43,8 @@ namespace Utils {
         return {x, y, z};
     }
 
-    std::vector<glm::vec4> LoadPlanetsFromFile(const std::string& path) {
-        std::vector<glm::vec4> planets;
+    std::vector<PlanetData> LoadPlanetsFromFile(const std::string& path) {
+        std::vector<PlanetData> planets;
         std::ifstream file(path);
 
         if (!file.is_open()) {
@@ -56,15 +59,38 @@ namespace Utils {
 
             std::stringstream ss(line);
             float x, y, z, radius;
+            std::string textureName;
             char comma;
 
-            ss >> x >> comma >> y >> comma >> z >> comma >> radius;
+            ss >> x >> comma >> y >> comma >> z >> comma >> radius >> comma >> textureName;
 
-            planets.emplace_back(x, y, z, radius);
+            planets.emplace_back(PlanetData{{x, y, z, radius}, textureName});
         }
 
         std::cout << "Loaded " << planets.size() << " planets from " << path << std::endl;
         return planets;
     }
+
+    std::vector<std::string> getFilesInDirectory(const std::string& path, const std::string& extension) {
+        std::vector<std::string> files;
+        if (!fs::exists(path)) {
+            std::cerr << "CRITICAL ERROR: Directory not found: " << path << std::endl;
+            return files;
+        }
+
+        for (const std::filesystem::directory_entry& entry : fs::directory_iterator(path)) {
+            if (entry.is_regular_file()) {
+                if (extension.empty() || entry.path().extension() == extension) {
+                    files.push_back(entry.path().filename().string());
+                }
+                else {
+                    std::cout << "Incorrect extension for planet texture, Got: " << entry.path().extension() << ", should be: " << extension << std::endl;
+                }
+            }
+        }
+
+        return files;
+    }
+
 
 }

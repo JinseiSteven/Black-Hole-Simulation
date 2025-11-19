@@ -25,7 +25,7 @@ public:
     ~Renderer();
 
     void draw() const;
-    void RebuildRadialMesh(int num_rings, int num_spokes, float min_radius, float max_radius);
+    void RebuildRadialMesh(int num_rings, int num_spokes, float inner_radius, float outer_radius);
     void UpdateRadialHeightmap(const std::vector<float>& radial_height_map) const;
 
     [[nodiscard]] unsigned int GetScreenTextureID() const;
@@ -47,7 +47,7 @@ private:
     unsigned int m_output_texture_width, m_output_texture_height;
 
     static void GenerateRadialMeshData(
-        int num_rings, int num_spokes, float min_radius, float max_radius,
+        int num_rings, int num_spokes, float inner_radius, float outer_radius,
         std::vector<glm::vec3>& out_vertices,
         std::vector<unsigned int>& out_indices
     );

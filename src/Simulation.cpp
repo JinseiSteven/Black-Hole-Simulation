@@ -6,10 +6,14 @@
 #include <GL/glew.h>
 
 #include "Simulation.h"
+
+#include <iostream>
+
 #include "Camera.h"
 #include "ComputeShader.h"
 #include "Config.h"
-#include <Settings.h>
+#include "Settings.h"
+#include "../external/stb_image/stb_image.h"
 
 
 Simulation::Simulation(
@@ -21,13 +25,13 @@ Simulation::Simulation(
     m_settings(settings),
     out_width(out_width),
     out_height(out_height),
-    compute_shader(std::make_unique<ComputeShader>(computePath)),
+    m_compute_shader(std::make_unique<ComputeShader>(computePath)),
     output_texture_id(textureID) {
-    // we want the amount of grids to be even
     const int rings = m_settings->GetRadialMeshRings();
-    m_radial_height_map.resize(rings % 2 == 0 ? rings + 1 : rings);
+    m_radial_height_map.resize(rings);
 
     initUniformBuffers();
+    initPlanetTextures();
 }
 
 Simulation::~Simulation() {
@@ -58,8 +62,102 @@ void Simulation::initUniformBuffers() {
     glBindBufferBase(GL_UNIFORM_BUFFER, 4, planetUBO);
 }
 
+void Simulation::initTextureArray(const int width, const int height, const int depth) {
+    if (planet_texture_array_id == 0) {
+        glGenTextures(1, &planet_texture_array_id);
+    }
+
+    glBindTexture(GL_TEXTURE_2D_ARRAY, planet_texture_array_id);
+
+    glTexImage3D(
+        GL_TEXTURE_2D_ARRAY,
+        0,
+        GL_RGBA8,
+        width,
+        height,
+        depth,
+        0,
+        GL_RGBA,
+        GL_UNSIGNED_BYTE,
+        nullptr
+    );
+
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+}
+
+
+void Simulation::initPlanetTextures() {
+    const std::vector<std::string> files = Utils::getFilesInDirectory(Config::TEXTURE_PATH, ".png");
+    const int texture_count = std::min(static_cast<int>(files.size()), Config::MAX_TEXTURE_COUNT);
+
+    initTextureArray(
+        Config::PLANET_TEXTURE_WIDTH,
+        Config::PLANET_TEXTURE_HEIGHT,
+        texture_count
+    );
+
+    int layer_index = 0;
+
+    for (int i = 0; i < texture_count; i++) {
+        const std::string& texName = files[i];
+
+        if (layer_index >= texture_count) break;
+
+        // only want to add all textures once (should only be possible once due to naming in folders, but oh well)
+        if (m_textureMap.contains(texName)) {
+            continue;
+        }
+
+        int width, height, nr_components;
+        stbi_set_flip_vertically_on_load(true);
+        unsigned char* data = stbi_load((
+            Config::TEXTURE_PATH + texName).c_str(),
+            &width, &height,
+            &nr_components,
+            STBI_rgb_alpha);
+
+        if (width != Config::PLANET_TEXTURE_WIDTH || height != Config::PLANET_TEXTURE_HEIGHT) {
+            std::cerr << "Error: Texture size mismatch (" << Config::TEXTURE_PATH + texName << ")."
+              << " Found " << width << "x" << height
+              << ", expected " << Config::PLANET_TEXTURE_WIDTH
+              << "x" << Config::PLANET_TEXTURE_HEIGHT
+              << std::endl;
+            if (data) stbi_image_free(data);
+            continue;
+        }
+
+        if (data) {
+            glTexSubImage3D(
+                GL_TEXTURE_2D_ARRAY,
+                0,
+                0, 0, layer_index,
+                width, height, 1,
+                GL_RGBA, GL_UNSIGNED_BYTE,
+                data
+            );
+            stbi_image_free(data);
+            m_textureMap.insert({texName, layer_index});
+            layer_index++;
+        }
+        else {
+            std::cout << "No image data found inside of " << texName << std::endl;
+        }
+    }
+    glBindTexture(GL_TEXTURE_2D_ARRAY, planet_texture_array_id);
+    glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
+
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, planet_texture_array_id);
+
+    // like before, the int we set tells the shader what texture slot we have loaded our sampler data
+    m_compute_shader->SetInt("planetTextureArray", 1);
+}
+
 void Simulation::step(const Camera* camera) {
-    compute_shader->use();
+    m_compute_shader->use();
 
     const CameraUniforms cameraData = {
         .invProjectionMatrix = camera->GetInvProjectionMatrix(),
@@ -116,28 +214,47 @@ void Simulation::step(const Camera* camera) {
     glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
 }
 
-void Simulation::UpdatePlanetsData(const std::vector<glm::vec4>& planetData) const {
+void Simulation::UpdatePlanetsData(const std::vector<Utils::PlanetData>& planetData) const {
     PlanetUniforms data{};
+    std::vector<int> textureIndexMap;
     data.numPlanets = std::min(static_cast<int>(planetData.size()), 64);
 
     for (int i = 0; i < data.numPlanets; i++) {
-        data.planets[i] = planetData[i];
+
+        int tex_index = 0;
+        try {
+            tex_index = m_textureMap.at(planetData[i].textureName);
+        }
+        catch (const std::out_of_range& e) {
+            std::cout << "Failed to get texture during planet data update, falling back to default texture: " << e.what() << std::endl;
+        }
+
+        data.planets[i] = planetData[i].geometryData;
+        textureIndexMap.push_back(tex_index);
     }
+
+    m_compute_shader->use();
 
     glBindBuffer(GL_UNIFORM_BUFFER, planetUBO);
     glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(PlanetUniforms), &data);
+
+    m_compute_shader->Set1iv("textureIndexMap", textureIndexMap);
 }
 
-std::vector<float>& Simulation::GetRadialHeightMap() const {
-    if (m_height_map_dirty) {
-        UpdateRadialHeightMap();
-        m_height_map_dirty = false;
+void Simulation::UpdateRadialHeightMap(const int num_rings, const float inner_radius, const float outer_radius) const {
+    const float Rs = m_settings->GetSimRs();
+
+    float max_outer_height = 2.0f * std::sqrt(std::max(0.0f, Rs * (outer_radius - Rs)));
+
+    for (int i = 0; i < num_rings; i++) {
+        const float r_norm = (num_rings == 1) ? 0.0f : static_cast<float>(i) / static_cast<float>(num_rings - 1);
+        const float r_world = glm::mix(inner_radius, outer_radius, r_norm);
+
+        // clamping to prevent negative values due to vertex position jumping inside black hole
+        const float squared_val = std::max(0.0f, Rs * (r_world - Rs));
+
+        // minus sign in front in order to make it a well instead of a mountain
+        m_radial_height_map[i] = 2.0f * std::sqrt(squared_val) - max_outer_height;
     }
-    return m_radial_height_map;
 }
 
-void Simulation::UpdateRadialHeightMap() const {
-    for (int r = 0; r < m_settings->GetRadialMeshRings(); r++) {
-        m_radial_height_map[r] = 0.0f;  // TODO eerst maar even op 0.0 gewoon, later berekenen we de warping wel
-    }
-}

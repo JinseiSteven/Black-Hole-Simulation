@@ -9,6 +9,7 @@
 
 #include "Renderer.h"
 
+#include <iostream>
 #include <glm/common.hpp>
 #include <glm/vec3.hpp>
 #include <glm/ext/scalar_constants.hpp>
@@ -87,7 +88,7 @@ void Renderer::CreateQuadVAO() {
     glBindVertexArray(0);
 }
 
-void Renderer::RebuildRadialMesh(const int num_rings, const int num_spokes, const float min_radius, const float max_radius) {
+void Renderer::RebuildRadialMesh(const int num_rings, const int num_spokes, const float inner_radius, const float outer_radius) {
     if (num_rings != m_current_rings) {
         if (m_radial_map_texture != 0) {
             glDeleteTextures(1, &m_radial_map_texture);
@@ -103,7 +104,7 @@ void Renderer::RebuildRadialMesh(const int num_rings, const int num_spokes, cons
     // construct our radial mesh
     std::vector<glm::vec3> vertices;
     std::vector<unsigned int> indices;
-    GenerateRadialMeshData(num_rings, num_spokes, min_radius, max_radius, vertices, indices);
+    GenerateRadialMeshData(num_rings, num_spokes, inner_radius, outer_radius, vertices, indices);
 
     // upload the radial mesh to the OpenGL buffer
     UploadRadialMeshData(vertices, indices);
@@ -114,7 +115,7 @@ void Renderer::RebuildRadialMesh(const int num_rings, const int num_spokes, cons
 
 void Renderer::GenerateRadialMeshData(
     const int num_rings, const int num_spokes,
-    const float min_radius, const float max_radius,
+    const float inner_radius, const float outer_radius,
     std::vector<glm::vec3> &out_vertices, std::vector<unsigned int> &out_indices) {
 
     // first the vertex data will have the shape of:
@@ -129,7 +130,7 @@ void Renderer::GenerateRadialMeshData(
         const float r_norm = (num_rings == 1) ? 0.0f : static_cast<float>(i) / static_cast<float>(num_rings - 1);
 
         // lerping between the min and max radius
-        const float r_world = glm::mix(min_radius, max_radius, r_norm);
+        const float r_world = glm::mix(inner_radius, outer_radius, r_norm);
 
         // iterating over the spokes
         for (int j = 0; j < num_spokes; j++) {
@@ -277,6 +278,7 @@ void Renderer::draw() const {
     m_radial_shader->use();
 
     m_radial_shader->SetMat4("VPM", m_camera->GetViewProjectionMatrix());
+    m_radial_shader->SetVec4("gridColor", Config::DEFAULT_GRID_COLOR);
 
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_1D, m_radial_map_texture);

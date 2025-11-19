@@ -1,5 +1,7 @@
 #version 430 core
 
+#define MAX_PLANETS 64
+
 // 8x8 = 64 invocations per work group
 layout (local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
@@ -33,8 +35,14 @@ layout(std140, binding = 3) uniform DiskSettings {
 
 layout(std140, binding = 4) uniform Planets {
     int numPlanets;
-    vec4 planets[64];  // xyz = position, w = radius
+    vec4 planets[MAX_PLANETS];  // xyz = position, w = radius
 } planets;
+
+// the texture array sampler
+uniform sampler2DArray planetTextureArray;
+
+// mapping the planets to their respective textures
+uniform int textureIndexMap[MAX_PLANETS];
 
 const float ONESIXTH = 1.0f / 6.0f;
 const float PI = 3.14159265;
@@ -163,7 +171,6 @@ vec3 getCartesian(RayState ray) {
     return ray.orbitalPlaneU * u_len + ray.orbitalPlaneV * v_len;
 }
 
-// TODO change
 float getDiskHeight(float r_disk) {
 
     if (r_disk < disk.innerRadius || r_disk > disk.outerRadius) {
@@ -305,14 +312,55 @@ bool checkDiskIntersection(inout RayState ray, vec3 pos, vec3 prevPos, out vec4 
     return false;
 }
 
-bool checkPlanetIntersection(vec3 pos, out vec4 finalColor) {
+vec2 getSphereUV(vec3 hitPos, vec3 center) {
+    vec3 n = normalize(hitPos - center);
+
+    // azimuth, from 0 to 1 now
+    float u = 0.5 + atan(n.z, n.x) / (2.0 * PI);
+
+    // inclination, also from 0 to 1 now
+    float v = 0.5 + asin(n.y) / PI;
+
+    // maybe flip? vec2(1.0 - u, v);
+    return vec2(u, v);
+}
+
+vec3 findSurfaceHit(vec3 start, vec3 end, vec3 center, float radius) {
+    vec3 d = end - start;
+    vec3 f = start - center;
+
+    float a = dot(d, d);
+    float b = 2.0 * dot(f, d);
+    float c = dot(f, f) - radius * radius;
+
+    float discriminant = b * b - 4.0 * a * c;
+
+    // if discriminant is smaller than 0, it means we have no intersection, which would be wrong lol
+    if (discriminant < 0.0) return end;
+
+    // only want the negative solution since we want the first intersection
+    discriminant = sqrt(discriminant);
+    float t = (-b - discriminant) / (2.0 * a);
+
+    return start + d * t;
+}
+
+bool checkPlanetIntersection(vec3 pos, vec3 prevPos, out vec4 finalColor) {
     for (int i = 0; i < planets.numPlanets; i++) {
         vec4 planet = planets.planets[i];
         if (distance(pos, planet.xyz) < planet.w) {
-            finalColor = vec4(0.0f, 0.0f, 1.0f, 1.0f);
+
+            vec3 hitPos = findSurfaceHit(prevPos, pos, planet.xyz, planet.w);
+
+            vec2 uv = getSphereUV(hitPos, planet.xyz);
+
+            vec4 texel = texture(planetTextureArray, vec3(uv, float(textureIndexMap[i])));
+
+            finalColor = vec4(texel.xyz, 1.0f);
             return true;
         }
     }
+    return false;
 }
 
 vec4 traceRay(vec3 rayPos, vec3 rayDir) {
@@ -339,14 +387,14 @@ vec4 traceRay(vec3 rayPos, vec3 rayDir) {
         }
 
         // case 3: hit a planet
-        if (checkPlanetIntersection(pos, finalColor)) {
+        if (checkPlanetIntersection(pos, prevPos, finalColor)) {
             break;
         }
 
         prevPos = pos;
 
-        // case 4: ray out of bounds, so just emptiness
-        if (ray.r > sim.worldRadius) {
+        // case 4: ray out of bounds, so just emptiness (only if outwards shooting)
+        if (ray.r > sim.worldRadius && ray.radial_sign > 0.0) {
             break;
         }
     }

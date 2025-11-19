@@ -6,6 +6,7 @@
 #define BLACK_HOLE_SIMULATION_COMPUTESHADER_H
 
 #include <string>
+#include <vector>
 #include <glm/glm.hpp>
 
 
@@ -23,6 +24,7 @@ public:
     void SetVec4(const std::string& name, const glm::vec4& value) const;
     void SetVec3(const std::string& name, const glm::vec3& value) const;
     void SetVec2(const std::string& name, const glm::vec2& value) const;
+    void Set1iv(const std::string& name, const std::vector<int>& value) const;
 };
 
 
