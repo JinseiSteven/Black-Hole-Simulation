@@ -30,6 +30,7 @@ struct SimSettingsUniforms {
     float stepSize;
     float Rs;
     float worldRadius;
+    float time;
 };
 
 struct DiskSettingsUniforms {
@@ -89,10 +90,12 @@ private:
 
     std::map<std::string, int> m_textureMap;
     unsigned int planet_texture_array_id{0};
+    unsigned int noise_texture_id{0};
 
     void initUniformBuffers();
     void initTextureArray(int width, int height, int depth);
     void initPlanetTextures();
+    void initNoiseTexture();
 };
 
 

@@ -15,8 +15,7 @@ namespace Config {
     const std::string COMPUTE_PATH = "res/compute/";
     const std::string PLANETS_PATH = "res/planets/";
     const std::string TEXTURE_PATH = "res/textures/";
-    constexpr int START_WIDTH = 800;
-    constexpr int START_HEIGHT = 600;
+    const std::string PLANET_TEXTURE_PATH = "res/textures/planets/";
 
     // ==================== Camera ====================
     // camera internal params to make the internal matrix
@@ -52,6 +51,7 @@ namespace Config {
     constexpr float DISK_OUTER_RADIUS_RS = 9.0f;
     constexpr float DISK_MIN_HEIGHT = 0.1f;
     constexpr float DISK_MAX_HEIGHT = 0.25f;
+    const std::string DISK_NOISE_PATH = TEXTURE_PATH + "perlinNoise.png";
 
     constexpr glm::vec4 DISK_COLOR_HOT = glm::vec4(1.0f, 0.8f, 0.3f, 1.0f);
     constexpr glm::vec4 DISK_COLOR_COOL = glm::vec4(1.0f, 0.2f, 0.0f, 1.0f);
@@ -81,8 +81,10 @@ namespace Config {
     const int MAX_TEXTURE_COUNT = 16;
 
     // ==================== Rendering ====================
+    constexpr int SCREEN_WIDTH = 800 * 2;
+    constexpr int SCREEN_HEIGHT = 600 * 2;
     // decides in what resolution we show the simulation (so we can upscale? Like, if its 2 then 4 pixels use 1 ray)
-    constexpr float RENDER_SCALE = 1.0f;
+    constexpr float RENDER_SCALE = 0.5f;
 
     // workgroup sizes for the raytracer compute shader
     constexpr int WORKGROUP_SIZE_X = 8;

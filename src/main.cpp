@@ -2,7 +2,8 @@
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
 
-#include "../include/RayTraceEngine.h"
+#include "Config.h"
+#include "RayTraceEngine.h"
 
 void processInput(GLFWwindow* window) {
     if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
@@ -15,7 +16,7 @@ void processInput(GLFWwindow* window) {
 int main() {
 
     try {
-        RayTraceEngine engine;
+        RayTraceEngine engine(Config::SCREEN_WIDTH, Config::SCREEN_HEIGHT);
         while (!glfwWindowShouldClose(engine.GetWindow())) {
             engine.step();
         }

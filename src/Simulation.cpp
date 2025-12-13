@@ -4,16 +4,15 @@
 
 
 #include <GL/glew.h>
-
-#include "Simulation.h"
-
+#include <GLFW/glfw3.h>
 #include <iostream>
 
+#include "Simulation.h"
 #include "Camera.h"
 #include "ComputeShader.h"
 #include "Config.h"
 #include "Settings.h"
-#include "../external/stb_image/stb_image.h"
+#include "stb_image.h"
 
 
 Simulation::Simulation(
@@ -32,6 +31,7 @@ Simulation::Simulation(
 
     initUniformBuffers();
     initPlanetTextures();
+    initNoiseTexture();
 }
 
 Simulation::~Simulation() {
@@ -88,9 +88,8 @@ void Simulation::initTextureArray(const int width, const int height, const int d
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 }
 
-
 void Simulation::initPlanetTextures() {
-    const std::vector<std::string> files = Utils::getFilesInDirectory(Config::TEXTURE_PATH, ".png");
+    const std::vector<std::string> files = Utils::getFilesInDirectory(Config::PLANET_TEXTURE_PATH, ".png");
     const int texture_count = std::min(static_cast<int>(files.size()), Config::MAX_TEXTURE_COUNT);
 
     initTextureArray(
@@ -114,13 +113,13 @@ void Simulation::initPlanetTextures() {
         int width, height, nr_components;
         stbi_set_flip_vertically_on_load(true);
         unsigned char* data = stbi_load((
-            Config::TEXTURE_PATH + texName).c_str(),
+            Config::PLANET_TEXTURE_PATH + texName).c_str(),
             &width, &height,
             &nr_components,
             STBI_rgb_alpha);
 
         if (width != Config::PLANET_TEXTURE_WIDTH || height != Config::PLANET_TEXTURE_HEIGHT) {
-            std::cerr << "Error: Texture size mismatch (" << Config::TEXTURE_PATH + texName << ")."
+            std::cerr << "Error: Texture size mismatch (" << Config::PLANET_TEXTURE_PATH + texName << ")."
               << " Found " << width << "x" << height
               << ", expected " << Config::PLANET_TEXTURE_WIDTH
               << "x" << Config::PLANET_TEXTURE_HEIGHT
@@ -146,18 +145,64 @@ void Simulation::initPlanetTextures() {
             std::cout << "No image data found inside of " << texName << std::endl;
         }
     }
-    glBindTexture(GL_TEXTURE_2D_ARRAY, planet_texture_array_id);
-    glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
+
+    m_compute_shader->use();
 
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D_ARRAY, planet_texture_array_id);
+    glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
 
     // like before, the int we set tells the shader what texture slot we have loaded our sampler data
     m_compute_shader->SetInt("planetTextureArray", 1);
 }
 
+void Simulation::initNoiseTexture() {
+    int width, height, nr_components;
+    stbi_set_flip_vertically_on_load(true);
+    unsigned char* data = stbi_load(
+        Config::DISK_NOISE_PATH.c_str(),
+        &width, &height,
+        &nr_components,
+        STBI_grey);
+
+    if (!data) {
+        std::cout << "No image data found for noise texture inside of " << Config::DISK_NOISE_PATH << std::endl;
+        return;
+    }
+
+    if (noise_texture_id == 0) {
+        glGenTextures(1, &noise_texture_id);
+    }
+
+    m_compute_shader->use();
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, noise_texture_id);
+
+    glTexImage2D(
+        GL_TEXTURE_2D,
+        0,
+        GL_R8,
+        width,
+        height,
+        0,
+        GL_RED,
+        GL_UNSIGNED_BYTE,
+        data
+    );
+    stbi_image_free(data);
+
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+    m_compute_shader->SetInt("noiseTexture", 2);
+}
+
 void Simulation::step(const Camera* camera) {
     m_compute_shader->use();
+
+    m_compute_shader->SetFloat("time", static_cast<float>(glfwGetTime()));
 
     const CameraUniforms cameraData = {
         .invProjectionMatrix = camera->GetInvProjectionMatrix(),
