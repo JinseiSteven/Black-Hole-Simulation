@@ -20,17 +20,18 @@ layout(std140, binding = 2) uniform SimSettings {
     float stepSize;
     float Rs;
     float worldRadius;
+    float planetAmbientLight;
 } sim;
 
 layout(std140, binding = 3) uniform DiskSettings {
     float innerRadius;
     float outerRadius;
-    float minHeight;
-    float maxHeight;
+    float height;
     int renderMode;        // 0=flat, 1=angle, 2=raymarching
     float absorptionCoeff;
     int maxMarchSteps;
     float marchStepSize;
+    int useNoise;          // 0=simple colors, 1=animated noise texture
     vec4 colorHot;
     vec4 colorCool;
 } disk;
@@ -175,19 +176,18 @@ vec3 getCartesian(RayState ray) {
     return ray.orbitalPlaneU * u_len + ray.orbitalPlaneV * v_len;
 }
 
-//vec4 getDiskMaterial(vec3 pos, float r_disk) {
-//    float normalized_r = (r_disk - disk.innerRadius) / (disk.outerRadius - disk.innerRadius);
-//
-//    float T_linear = 1.0 - normalized_r;
-//    vec3 color = mix(disk.colorCool.rgb, disk.colorHot.rgb, clamp(T_linear, 0.0, 1.0));
-//    float geometry_fade = 1.0 - smoothstep(0.8, 1.0, normalized_r);
-//
-//    return vec4(color, geometry_fade);
-//}
-
 vec4 getDiskMaterial(vec3 pos, float r_disk) {
     float normalized_r = (r_disk - disk.innerRadius) / (disk.outerRadius - disk.innerRadius);
+    float T_linear = 1.0 - normalized_r;
+    vec3 color = mix(disk.colorCool.rgb, disk.colorHot.rgb, clamp(T_linear, 0.0, 1.0));
+    float geometry_fade = 1.0 - smoothstep(0.8, 1.0, normalized_r);
 
+    // simple mode - no noise texture (previously the commented-out version)
+    if (disk.useNoise == 0) {
+        return vec4(color, geometry_fade);
+    }
+
+    // animated noise mode
     // didnt actually know this was a thing, but is faster than taking sqrt and breuk
     float omega = inversesqrt(r_disk * r_disk * r_disk);
 
@@ -195,9 +195,6 @@ vec4 getDiskMaterial(vec3 pos, float r_disk) {
 
     // angle change = angular velocity * time
     float angle_offset = omega * GM_proxy * time * 10.0f;
-
-    float T_linear = 1.0 - normalized_r;
-    vec3 color = mix(disk.colorCool.rgb, disk.colorHot.rgb, clamp(T_linear, 0.0, 1.0));
 
     float angle = atan(pos.z, pos.x);
 
@@ -217,9 +214,6 @@ vec4 getDiskMaterial(vec3 pos, float r_disk) {
 
     // exaggerate the opacity, so we get clearer transparent and opaque rings
     float density_map = smoothstep(0.3, 0.7, turbulence);
-
-    // radial fade as well to make edges more transparent
-    float geometry_fade = 1.0 - smoothstep(0.8, 1.0, normalized_r);
     float final_density = density_map * geometry_fade;
 
     // TODO, vergeet deze niet lmao want dit moet ook anders
@@ -236,7 +230,7 @@ float getDiskHeight(float r_disk) {
 
     // power-law flaring: H(r) = H0 * (r/r_inner)^beta
     float beta = 1.2;  // Typical for accretion disks
-    float H = disk.minHeight * pow(r_disk / disk.innerRadius, beta);
+    float H = disk.height * pow(r_disk / disk.innerRadius, beta);
 
     // taper off at the end, so no sharp cutoff
     float taper = 1.0 - smoothstep(disk.outerRadius * 0.8, disk.outerRadius, r_disk);
@@ -397,7 +391,7 @@ bool checkPlanetIntersection(vec3 pos, vec3 prevPos, out vec4 finalColor) {
             vec3 albedo = texture(planetTextureArray, vec3(uv, float(textureIndexMap[i]))).rgb;
             vec3 normal = normalize(hitPos - planet.xyz);
             vec3 lightDir = normalize(-hitPos);
-            float diffuse = max(dot(normal, lightDir), 0.06);       // TODO, move to settings and sim uniform
+            float diffuse = max(dot(normal, lightDir), sim.planetAmbientLight);
 
             // 4. Combine
             finalColor = vec4(albedo * diffuse, 1.0f);

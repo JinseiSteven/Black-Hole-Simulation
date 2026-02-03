@@ -30,18 +30,18 @@ struct SimSettingsUniforms {
     float stepSize;
     float Rs;
     float worldRadius;
-    float time;
+    float planetAmbientLight;
 };
 
 struct DiskSettingsUniforms {
     float innerRadius;
     float outerRadius;
-    float minHeight;
-    float maxHeight;
+    float height;
     unsigned int renderMode;
     float absorptionCoeff;
     unsigned int maxMarchSteps;
     float marchStepSize;
+    int useNoise;  // bool as int for std140 alignment
     glm::vec4 colorHot;
     glm::vec4 colorCool;
 };
@@ -55,7 +55,7 @@ struct PlanetUniforms {
 class Simulation {
 public:
     Simulation(
-        const std::shared_ptr<Settings>& settings,
+        const Settings& settings,
         unsigned int out_width,
         unsigned int out_height,
         unsigned int textureID,
@@ -63,25 +63,21 @@ public:
     ~Simulation();
 
     // stepping function which will calculate the next step in the simulation
-    void step(const Camera* camera);
+    void step(const Camera& camera);
 
     void UpdatePlanetsData(const std::vector<Utils::PlanetData>& planetData) const;
-    void UpdateRadialHeightMap(int num_rings, float inner_radius, float outer_radius) const;
-    [[nodiscard]] std::vector<float>& GetRadialHeightMap() const { return m_radial_height_map; }
+    void UpdateRadialHeightMap(int num_rings, float inner_radius, float outer_radius);
+    [[nodiscard]] const std::vector<float>& GetRadialHeightMap() const { return m_radial_height_map; }
 
 private:
-    const std::shared_ptr<Settings> m_settings;
+    const Settings& m_settings;
     unsigned int m_lastSimVersion{0xFFFFFFFF};
     unsigned int m_lastDiskVersion{0xFFFFFFFF};
 
     const unsigned int out_width, out_height;
 
     // vector representing the height map of the perspective grid (row-major)
-    mutable std::vector<float> m_radial_height_map;
-
-    // scientific variables
-    mutable float m_Rs{0};
-    mutable bool m_Rs_dirty{true};
+    std::vector<float> m_radial_height_map;
 
     std::unique_ptr<ComputeShader> m_compute_shader;
     unsigned int output_texture_id;

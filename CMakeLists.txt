@@ -16,19 +16,36 @@ set(DEPS
         OpenGL::GL
 )
 
+set(IMGUI_DIR "external/imgui")
+
+set(IMGUI_SRC
+        ${IMGUI_DIR}/imgui.cpp
+        ${IMGUI_DIR}/imgui_demo.cpp
+        ${IMGUI_DIR}/imgui_draw.cpp
+        ${IMGUI_DIR}/imgui_tables.cpp
+        ${IMGUI_DIR}/imgui_widgets.cpp
+        ${IMGUI_DIR}/backends/imgui_impl_glfw.cpp
+        ${IMGUI_DIR}/backends/imgui_impl_opengl3.cpp
+)
+
 # also setting up the source files
 set(SOURCES
         src/main.cpp
+        src/Application.cpp
         src/Camera.cpp
+        src/CameraController.cpp
+        src/Clock.cpp
         src/ComputeShader.cpp
         src/InputHandler.cpp
-        src/RayTraceEngine.cpp
         src/Renderer.cpp
         src/Settings.cpp
         src/Shader.cpp
         src/Simulation.cpp
+        src/UISystem.cpp
         src/Utils.cpp
+        src/Window.cpp
         external/stb_image/stb_impl.cpp
+        ${IMGUI_SRC}
 )
 
 add_executable(black_hole_simulation ${SOURCES})
@@ -38,4 +55,6 @@ target_link_libraries(black_hole_simulation PRIVATE ${DEPS})
 target_include_directories(black_hole_simulation PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/external/stb_image
+        ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui
+        ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui/backends
 )

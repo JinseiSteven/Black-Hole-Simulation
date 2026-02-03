@@ -6,9 +6,7 @@
 
 #include "Config.h"
 
-Settings::Settings() :
-    m_render_dirty(false)
-{
+Settings::Settings() {
     // we build the meters to sim units conversion (this way we can calculate with floats instead of doubles)
     m_scale.meters_per_sim_unit = Config::REAL_WORLD_RADIUS_METERS / Config::SIM_WORLD_RADIUS;
 
@@ -16,16 +14,17 @@ Settings::Settings() :
     m_simulation.black_hole_mass_kg = Config::DEFAULT_BLACK_HOLE_MASS;
     m_simulation.max_ray_steps = Config::DEFAULT_MAX_RAY_STEPS;
     m_simulation.ray_step_size = Config::DEFAULT_RAY_STEP_SIZE;
+    m_simulation.planet_ambient_light = Config::PLANET_AMBIENT_LIGHT;
 
     // setting all the default accretion disk params (hell of a lot of em)
     m_disk.inner_radius = Config::DISK_INNER_RADIUS_RS;
     m_disk.outer_radius = Config::DISK_OUTER_RADIUS_RS;
-    m_disk.min_height = Config::DISK_MIN_HEIGHT;
-    m_disk.max_height = Config::DISK_MAX_HEIGHT;
+    m_disk.height = Config::DISK_HEIGHT;
     m_disk.renderMode = Config::DISK_RENDER_MODE;
     m_disk.absorptionCoeff = Config::DISK_ABSORPTION_COEFFICIENT;
     m_disk.maxMarchSteps = Config::DISK_MAX_MARCH_STEPS;
     m_disk.marchStepSize = Config::DISK_MARCH_STEP_SIZE;
+    m_disk.useNoise = Config::DISK_USE_NOISE;
     m_disk.colorHot = Config::DISK_COLOR_HOT;
     m_disk.colorCool = Config::DISK_COLOR_COOL;
 
@@ -34,7 +33,7 @@ Settings::Settings() :
     m_render.radial_mesh_rings = Config::DEFAULT_RADIAL_MESH_RINGS;
     m_render.radial_mesh_spokes = Config::DEFAULT_RADIAL_MESH_SPOKES;
     m_render.enable_radial_mesh = Config::DEFAULT_RADIAL_MESH_ENABLE;
-    m_render.radial_mesh_opacity = Config::BASE_RADIAL_MESH_OPACITY;
+    m_render.radial_mesh_color = Config::DEFAULT_RADIAL_MESH_COLOR;
 
     m_camera.orbit_sensitivity = Config::BASE_CAMERA_ORBIT_SENSITIVITY;
     m_camera.zoom_sensitivity = Config::BASE_CAMERA_ZOOM_SENSITIVITY;
@@ -57,7 +56,7 @@ void Settings::SetBlackHoleMass(const double mass_kg) {
 void Settings::SetRenderScale(const float scale) {
     if (m_render.render_scale != scale) {
         m_render.render_scale = scale;
-        m_render_dirty = true;
+        m_render_version++;
     }
 }
 
@@ -65,23 +64,24 @@ void Settings::SetRadialMeshResolution(const int rings, const int spokes) {
     if (m_render.radial_mesh_rings != rings || m_render.radial_mesh_spokes != spokes) {
         m_render.radial_mesh_rings = rings;
         m_render.radial_mesh_spokes = spokes;
-        m_render_dirty = true;
+        m_render_version++;
     }
 }
 
 void Settings::SetRadialMeshEnabled(const bool enabled) {
     if (m_render.enable_radial_mesh != enabled) {
         m_render.enable_radial_mesh = enabled;
-        m_render_dirty = true;
+        m_render_version++;
     }
 }
 
-void Settings::SetRadialMeshOpacity(const float opacity) {
-    if (m_render.radial_mesh_opacity != opacity) {
-        m_render.radial_mesh_opacity = opacity;
-        m_render_dirty = true;
+void Settings::SetRadialMeshColor(const glm::vec4& color) {
+    if (m_render.radial_mesh_color != color) {
+        m_render.radial_mesh_color = color;
+        m_render_version++;
     }
 }
+
 
 // simulation
 void Settings::SetMaxRaySteps(const int steps) {
@@ -98,6 +98,13 @@ void Settings::SetRayStepSize(const float step_size) {
     }
 }
 
+void Settings::SetPlanetAmbientLight(const float ambient) {
+    if (m_simulation.planet_ambient_light != ambient) {
+        m_simulation.planet_ambient_light = ambient;
+        m_simulation_version++;
+    }
+}
+
 void Settings::SetDiskRadii(const float inner_radius, const float outer_radius) {
     if (m_disk.inner_radius != inner_radius || m_disk.outer_radius != outer_radius) {
         m_disk.inner_radius = inner_radius;
@@ -106,10 +113,9 @@ void Settings::SetDiskRadii(const float inner_radius, const float outer_radius) 
     }
 }
 
-void Settings::SetDiskHeight(const float min_height, const float max_height) {
-    if (m_disk.min_height != min_height || m_disk.max_height != max_height) {
-        m_disk.min_height = min_height;
-        m_disk.max_height = max_height;
+void Settings::SetDiskHeight(const float height) {
+    if (m_disk.height != height) {
+        m_disk.height = height;
         m_disk_version++;
     }
 }
@@ -141,6 +147,27 @@ void Settings::SetDiskColors(const glm::vec4 color_cool, const glm::vec4 color_h
         m_disk.colorCool = color_cool;
         m_disk.colorHot = color_hot;
         m_disk_version++;
+    }
+}
+
+void Settings::SetDiskUseNoise(const bool use_noise) {
+    if (m_disk.useNoise != use_noise) {
+        m_disk.useNoise = use_noise;
+        m_disk_version++;
+    }
+}
+
+void Settings::SetOrbitSensitivity(float sensitivity) {
+    if (m_camera.orbit_sensitivity != sensitivity) {
+        m_camera.orbit_sensitivity = sensitivity;
+        m_camera_version++;
+    }
+}
+
+void Settings::SetZoomSensitivity(float sensitivity) {
+    if (m_camera.zoom_sensitivity != sensitivity) {
+        m_camera.zoom_sensitivity = sensitivity;
+        m_camera_version++;
     }
 }
 
@@ -179,12 +206,6 @@ double Settings::GetMetersPerSimUnit() const {
 
 double Settings::GetBlackHoleMass() const {
     return m_simulation.black_hole_mass_kg;
-}
-
-bool Settings::ConsumeRenderChanges() const {
-    bool changed = m_render_dirty;
-    m_render_dirty = false;
-    return changed;
 }
 
 void Settings::RecalculateRs() {

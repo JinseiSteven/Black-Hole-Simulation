@@ -3,87 +3,57 @@
 //
 
 #include "InputHandler.h"
+#include "InputState.h"
+#include "Window.h"
+#include "CameraController.h"
+#include "UISystem.h"
 
-#include <GLFW/glfw3.h>
 
-#include "RayTraceEngine.h"
-#include "Camera.h"
+InputHandler::InputHandler(Window& window, CameraController& camera_controller, UISystem& ui_system) :
+    m_camera_controller(camera_controller),
+    m_window{window},
+    m_ui_system{ui_system} { }
 
-#include <iostream>
+void InputHandler::ProcessInput(InputState &input_state) {
 
-InputHandler::InputHandler(GLFWwindow* window, Camera* camera) :
-    m_window(window),
-    m_camera(camera),
-    m_input_enabled(false),
-    m_ctrl_held(false),
-    m_first_movement(true) { }
+    // escape will stop the application
+    if (input_state.keys_pressed_mask & ESC_FLAG) {
+        m_window.SetShouldClose(true);
+        return;
+    }
+
+    // tab will toggle the settings window
+    if (input_state.keys_pressed_mask & TAB_FLAG) {
+        m_ui_system.ToggleSettingsWindow();
+    }
+
+    bool should_enable = input_state.keys_held_mask & LEFT_MOUSE_FLAG;
+    if (should_enable != m_input_enabled) toggle_input(should_enable);
+    if (m_input_enabled) {
+        // we want to ignore the first frame of movement when it has been re-enabled, to prevent big jumps
+        if (m_first_movement) {
+            input_state.mouse_delta_x = 0;
+            input_state.mouse_delta_y = 0;
+            m_first_movement = false;
+        }
+        m_camera_controller.ProcessInput(input_state);
+    }
+}
+
+void InputHandler::Update(float delta_time) {
+    m_camera_controller.Update(delta_time);
+    // ... any other components we need to update
+}
 
 void InputHandler::toggle_input(const bool activate) {
     if (activate) {
-        glfwSetInputMode(m_window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+        m_window.SetCursorMode(false);
         m_input_enabled = true;
         m_first_movement = true;
     }
     else {
-        glfwSetInputMode(m_window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+        m_window.SetCursorMode(true);
         m_input_enabled = false;
     }
-}
-
-void InputHandler::CursorPosCallback(const double xpos, const double ypos) {
-    if (!m_input_enabled) {
-        return;
-    }
-
-    if (m_first_movement) {
-        m_last_mouse_x = xpos;
-        m_last_mouse_y = ypos;
-        m_first_movement = false;
-    }
-
-    // y is flipped since y coords go bottom-up
-    double xoffset = xpos - m_last_mouse_x;
-    double yoffset = m_last_mouse_y - ypos;
-
-    m_last_mouse_x = xpos;
-    m_last_mouse_y = ypos;
-
-    if (m_camera) {
-        if (m_ctrl_held) {
-            m_camera->ProcessZoom(static_cast<float>(yoffset));
-        }
-        else {
-            m_camera->ProcessMouseMovement(static_cast<float>(xoffset), static_cast<float>(yoffset));
-        }
-    }
-}
-
-void InputHandler::MouseButtonCallback(int button, int action, int mods) {
-    if (button == GLFW_MOUSE_BUTTON_LEFT) {
-        toggle_input(action == GLFW_PRESS);
-    }
-}
-
-void InputHandler::KeyCallback(int key, int scancode, int action, int mods) {
-    if (key == GLFW_KEY_LEFT_CONTROL || key == GLFW_KEY_RIGHT_CONTROL) {
-        m_ctrl_held = (action == GLFW_PRESS || action == GLFW_REPEAT);
-    }
-}
-
-void InputHandler::CursorPosCallbackWrapper(GLFWwindow* window, double xpos, double ypos) {
-    if (const RayTraceEngine* engine = static_cast<RayTraceEngine*>(glfwGetWindowUserPointer(window))) {
-        engine->GetInputHandler()->CursorPosCallback(xpos, ypos);
-    }
-}
-
-void InputHandler::MouseButtonCallbackWrapper(GLFWwindow* window, int button, int action, int mods) {
-    if (const RayTraceEngine* engine = static_cast<RayTraceEngine*>(glfwGetWindowUserPointer(window))) {
-        engine->GetInputHandler()->MouseButtonCallback(button, action, mods);
-    }
-}
-
-void InputHandler::KeyCallbackWrapper(GLFWwindow* window, int key, int scancode, int action, int mods) {
-    if (const RayTraceEngine* engine = static_cast<RayTraceEngine*>(glfwGetWindowUserPointer(window))) {
-        engine->GetInputHandler()->KeyCallback(key, scancode, action, mods);
-    }
+    m_window.ResetCursorTracking();
 }

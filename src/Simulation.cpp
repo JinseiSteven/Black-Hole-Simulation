@@ -16,7 +16,7 @@
 
 
 Simulation::Simulation(
-    const std::shared_ptr<Settings>& settings,
+    const Settings& settings,
     const unsigned int out_width,
     const unsigned int out_height,
     const unsigned int textureID,
@@ -26,7 +26,7 @@ Simulation::Simulation(
     out_height(out_height),
     m_compute_shader(std::make_unique<ComputeShader>(computePath)),
     output_texture_id(textureID) {
-    const int rings = m_settings->GetRadialMeshRings();
+    const int rings = m_settings.GetRadialMeshRings();
     m_radial_height_map.resize(rings);
 
     initUniformBuffers();
@@ -199,47 +199,48 @@ void Simulation::initNoiseTexture() {
     m_compute_shader->SetInt("noiseTexture", 2);
 }
 
-void Simulation::step(const Camera* camera) {
+void Simulation::step(const Camera& camera) {
     m_compute_shader->use();
 
     m_compute_shader->SetFloat("time", static_cast<float>(glfwGetTime()));
 
     const CameraUniforms cameraData = {
-        .invProjectionMatrix = camera->GetInvProjectionMatrix(),
-        .invViewMatrix = camera->GetInvViewMatrix(),
-        .camPosCartesian = glm::vec4(camera->GetPosition(), 0.0f),
+        .invProjectionMatrix = camera.GetInvProjectionMatrix(),
+        .invViewMatrix = camera.GetInvViewMatrix(),
+        .camPosCartesian = glm::vec4(camera.GetPosition(), 0.0f),
     };
     glBindBuffer(GL_UNIFORM_BUFFER, cameraUBO);
     glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(CameraUniforms), &cameraData);
 
-    if (m_settings->GetSimulationVersion() != m_lastSimVersion) {
+    if (m_settings.GetSimulationVersion() != m_lastSimVersion) {
         const SimSettingsUniforms simData = {
-            .maxStepCount = m_settings->GetMaxRaySteps(),
-            .stepSize = m_settings->GetRayStepSize(),
-            .Rs = m_settings->GetSimRs(),
-            .worldRadius = m_settings->GetSimWorldRadius()
+            .maxStepCount = m_settings.GetMaxRaySteps(),
+            .stepSize = m_settings.GetRayStepSize(),
+            .Rs = m_settings.GetSimRs(),
+            .worldRadius = m_settings.GetSimWorldRadius(),
+            .planetAmbientLight = m_settings.GetPlanetAmbientLight()
         };
         glBindBuffer(GL_UNIFORM_BUFFER, simUBO);
         glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(SimSettingsUniforms), &simData);
-        m_lastSimVersion = m_settings->GetSimulationVersion();
+        m_lastSimVersion = m_settings.GetSimulationVersion();
     }
 
-    if (m_settings->GetDiskVersion() != m_lastDiskVersion) {
+    if (m_settings.GetDiskVersion() != m_lastDiskVersion) {
         const DiskSettingsUniforms diskData = {
-            .innerRadius = m_settings->GetDiskInnerRadius(),
-            .outerRadius = m_settings->GetDiskOuterRadius(),
-            .minHeight = m_settings->GetDiskMinHeight(),
-            .maxHeight = m_settings->GetDiskMaxHeight(),
-            .renderMode = m_settings->GetDiskRenderMode(),
-            .absorptionCoeff = m_settings->GetDiskAbsorptionCoeff(),
-            .maxMarchSteps = m_settings->GetDiskMaxMarchSteps(),
-            .marchStepSize = m_settings->GetDiskMarchStepSize(),
-            .colorHot = m_settings->GetDiskColorHot(),
-            .colorCool = m_settings->GetDiskColorCool(),
+            .innerRadius = m_settings.GetDiskInnerRadius(),
+            .outerRadius = m_settings.GetDiskOuterRadius(),
+            .height = m_settings.GetDiskHeight(),
+            .renderMode = m_settings.GetDiskRenderMode(),
+            .absorptionCoeff = m_settings.GetDiskAbsorptionCoeff(),
+            .maxMarchSteps = m_settings.GetDiskMaxMarchSteps(),
+            .marchStepSize = m_settings.GetDiskMarchStepSize(),
+            .useNoise = m_settings.GetDiskUseNoise() ? 1 : 0,
+            .colorHot = m_settings.GetDiskColorHot(),
+            .colorCool = m_settings.GetDiskColorCool(),
         };
         glBindBuffer(GL_UNIFORM_BUFFER, diskUBO);
         glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(DiskSettingsUniforms), &diskData);
-        m_lastDiskVersion = m_settings->GetDiskVersion();
+        m_lastDiskVersion = m_settings.GetDiskVersion();
     }
 
     glBindImageTexture(
@@ -286,8 +287,9 @@ void Simulation::UpdatePlanetsData(const std::vector<Utils::PlanetData>& planetD
     m_compute_shader->Set1iv("textureIndexMap", textureIndexMap);
 }
 
-void Simulation::UpdateRadialHeightMap(const int num_rings, const float inner_radius, const float outer_radius) const {
-    const float Rs = m_settings->GetSimRs();
+void Simulation::UpdateRadialHeightMap(const int num_rings, const float inner_radius, const float outer_radius) {
+    const float Rs = m_settings.GetSimRs();
+    m_radial_height_map.resize(num_rings);
 
     float max_outer_height = 2.0f * std::sqrt(std::max(0.0f, Rs * (outer_radius - Rs)));
 

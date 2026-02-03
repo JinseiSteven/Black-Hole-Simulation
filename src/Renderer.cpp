@@ -6,19 +6,20 @@
 #include <cmath>
 #include <glm/vec2.hpp>
 #include <vector>
-
-#include "Renderer.h"
-
-#include <iostream>
 #include <glm/common.hpp>
 #include <glm/vec3.hpp>
 #include <glm/ext/scalar_constants.hpp>
 
+#include "Renderer.h"
 #include "Config.h"
 #include "Shader.h"
+#include "Camera.h"
+#include "Settings.h"
+
 
 Renderer::Renderer(
-    const Camera* camera,
+    const Camera& camera,
+    const Settings& settings,
     const unsigned int texture_width,
     const unsigned int texture_height,
     const char* quadVertexPath,
@@ -27,6 +28,7 @@ Renderer::Renderer(
     const char* gridFragmentPath) :
     // creating the shader which will render our Quad
     m_camera(camera),
+    m_settings(settings),
     m_radial_shader(std::make_unique<Shader>(gridVertexPath, gridFragmentPath)),
     m_quad_shader(std::make_unique<Shader>(quadVertexPath, quadFragmentPath)),
     m_output_texture_width(texture_width),
@@ -253,7 +255,6 @@ void Renderer::CreateRadialMapTexture(const int rings) {
         nullptr
     );
 
-    // TODO, do I actually even need this?
     glTexParameteri(GL_TEXTURE_1D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_1D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_1D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -275,18 +276,20 @@ void Renderer::draw() const {
     // ========================= Grid Rendering =========================
     // first we will draw the background 3d mesh for perspective
 
-    m_radial_shader->use();
+    if (m_settings.IsRadialMeshEnabled()) {
+        m_radial_shader->use();
 
-    m_radial_shader->SetMat4("VPM", m_camera->GetViewProjectionMatrix());
-    m_radial_shader->SetVec4("gridColor", Config::DEFAULT_GRID_COLOR);
+        m_radial_shader->SetMat4("VPM", m_camera.GetViewProjectionMatrix());
+        m_radial_shader->SetVec4("gridColor", m_settings.GetRadialMeshColor());
 
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_1D, m_radial_map_texture);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_1D, m_radial_map_texture);
 
-    m_radial_shader->SetInt("RadialMapTexture", 0);
+        m_radial_shader->SetInt("RadialMapTexture", 0);
 
-    glBindVertexArray(m_radial_VAO);
-    glDrawElements(GL_LINES, m_gridIndexCount, GL_UNSIGNED_INT, nullptr);
+        glBindVertexArray(m_radial_VAO);
+        glDrawElements(GL_LINES, m_gridIndexCount, GL_UNSIGNED_INT, nullptr);
+    }
 
     // ========================= Screen Quad Drawing =========================
     glDisable(GL_DEPTH_TEST);
@@ -318,7 +321,6 @@ void Renderer::UpdateRadialHeightmap(const std::vector<float> &radial_height_map
     );
     glBindTexture(GL_TEXTURE_1D, 0);
 }
-
 
 unsigned int Renderer::GetScreenTextureID() const {
     return m_screen_texture;

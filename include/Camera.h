@@ -5,11 +5,10 @@
 #ifndef BLACK_HOLE_SIMULATION_CAMERA_H
 #define BLACK_HOLE_SIMULATION_CAMERA_H
 
-#include <memory>
 #include <glm/glm.hpp>
-#include <glm/gtc/constants.hpp>
 
 class Settings;
+
 
 class Camera {
 public:
@@ -17,14 +16,10 @@ public:
         float fovY,
         float aspect,
         float zNear,
-        float zFar,
-        const std::shared_ptr<Settings>& settings
-        );
-
-    void ProcessZoom(float yoffset);
-    void ProcessMouseMovement(float xoffset, float yoffset);
+        float zFar);
 
     void SetPosition(const glm::vec3& position);
+    void SetPositionSpherical(const glm::vec3& position_spherical);
     void LookAt(const glm::vec3& target);
 
     void SetAspectRatio(float aspect);
@@ -40,24 +35,11 @@ public:
     const glm::vec3& GetPositionSpherical() const { return m_position_spherical; }
 
 private:
-    // cant get it all the way exactly to 90 degrees or well get gimbal lock (yaw and roll will be the same)
-    static constexpr float MAX_INCLINATION = glm::half_pi<float>() * 0.999f;
 
     float m_fovY;
     float m_aspect;
     float m_zNear;
     float m_zFar;
-
-    // kind of arbitrary initial parameters, especially the radius
-    float m_azimuth{0.0f};
-    float m_inclination{0.0f};
-    float m_radius;
-
-    // decouple into x, y and zoom sensitivities
-    float m_orbit_sensitivity;
-    float m_zoom_sensitivity;
-    float m_min_zoom_distance;
-    float m_max_zoom_distance;
 
     // we instantiate the camera to be at the origin facing the -z direction
     glm::vec3 m_position{0.0f, 0.0f, 0.0f};
@@ -77,6 +59,7 @@ private:
     mutable glm::mat4 m_invViewProjectionMatrix{glm::mat4(1.0f)};
 
     void UpdatePositionSpherical();
+    void UpdatePositionCartesian();
     void setOrthonormalBases();
     void UpdateInvViewMatrix() const;
     void UpdateInvProjectionMatrix() const;

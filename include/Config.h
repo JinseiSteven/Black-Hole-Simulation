@@ -16,6 +16,7 @@ namespace Config {
     const std::string PLANETS_PATH = "res/planets/";
     const std::string TEXTURE_PATH = "res/textures/";
     const std::string PLANET_TEXTURE_PATH = "res/textures/planets/";
+    constexpr double FPS_UPDATE_LATENCY = 0.5;
 
     // ==================== Camera ====================
     // camera internal params to make the internal matrix
@@ -25,6 +26,7 @@ namespace Config {
     constexpr float CAMERA_BASE_RADIUS = 300.0f; // in su
     constexpr float BASE_CAMERA_ORBIT_SENSITIVITY = 0.0001f;
     constexpr float BASE_CAMERA_ZOOM_SENSITIVITY = 0.005f;
+    constexpr float MIN_ZOOM_DISTANCE_RS = 1.5f;  // minimum zoom distance in Schwarzschild radii
 
     // ==================== Physics Constants ====================
     constexpr double G_REAL = 6.67430e-11;            // gravitational constant (m³/kg·s²)
@@ -49,8 +51,7 @@ namespace Config {
     // here we define the accretion disk parameters, in Rs multiples.
     constexpr float DISK_INNER_RADIUS_RS = 3.0f;
     constexpr float DISK_OUTER_RADIUS_RS = 9.0f;
-    constexpr float DISK_MIN_HEIGHT = 0.1f;
-    constexpr float DISK_MAX_HEIGHT = 0.25f;
+    constexpr float DISK_HEIGHT = 0.1f;
     const std::string DISK_NOISE_PATH = TEXTURE_PATH + "perlinNoise.png";
 
     constexpr glm::vec4 DISK_COLOR_HOT = glm::vec4(1.0f, 0.8f, 0.3f, 1.0f);
@@ -62,6 +63,7 @@ namespace Config {
     constexpr float DISK_ABSORPTION_COEFFICIENT = 5.0f;
     constexpr unsigned int DISK_MAX_MARCH_STEPS = 32;
     constexpr float DISK_MARCH_STEP_SIZE = 0.5f; // su
+    constexpr bool DISK_USE_NOISE = true;
 
     // radial mesh params
     constexpr int DEFAULT_RADIAL_MESH_RINGS = 30;
@@ -69,7 +71,7 @@ namespace Config {
     constexpr int RADIAL_MESH_INNER_MARGIN = 1;    // in su
     constexpr int RADIAL_MESH_OUTER_MARGIN = 10;    // in su
     constexpr bool DEFAULT_RADIAL_MESH_ENABLE = true;
-    constexpr float BASE_RADIAL_MESH_OPACITY = 0.5f;
+    constexpr glm::vec4 DEFAULT_RADIAL_MESH_COLOR = glm::vec4(1.0f, 1.0f, 1.0f, 0.5f);
 
     // the amount of steps the rays for the raytracer will take
     constexpr int DEFAULT_MAX_RAY_STEPS = 10000;
@@ -79,6 +81,7 @@ namespace Config {
     const int PLANET_TEXTURE_WIDTH = 512;   // px
     const int PLANET_TEXTURE_HEIGHT = 256;  // px
     const int MAX_TEXTURE_COUNT = 16;
+    constexpr float PLANET_AMBIENT_LIGHT = 0.06f;
 
     // ==================== Rendering ====================
     constexpr int SCREEN_WIDTH = 800 * 2;
@@ -97,9 +100,6 @@ namespace Config {
     const std::string RADIALMESH_FRAG = SHADER_PATH + "radialMesh.frag";
     const std::string COMPUTE_SIM = COMPUTE_PATH + "simulation.comp";
 
-    // ==================== Debug/UI ====================
-    // constexpr bool ENABLE_DEBUG_UI = true;   // TODO soon
-    constexpr glm::vec4 DEFAULT_GRID_COLOR = glm::vec4(1.0f, 1.0f, 1.0f, 0.5f);
 }
 
 #endif //BLACK_HOLE_SIMULATION_CONFIG_H

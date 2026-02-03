@@ -1,25 +1,14 @@
 #include <iostream>
+
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
 
-#include "Config.h"
-#include "RayTraceEngine.h"
-
-void processInput(GLFWwindow* window) {
-    if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
-        glfwSetWindowShouldClose(window, GLFW_TRUE);
-    }
-
-    // we will do camera movement processing here as well
-}
+#include "Application.h"
 
 int main() {
-
     try {
-        RayTraceEngine engine(Config::SCREEN_WIDTH, Config::SCREEN_HEIGHT);
-        while (!glfwWindowShouldClose(engine.GetWindow())) {
-            engine.step();
-        }
+        Application app;
+        app.Run();
     }
     catch (const std::exception& e) {
         std::cerr << "Fatal Error: " << e.what() << std::endl;
@@ -28,6 +17,7 @@ int main() {
     return 0;
 }
 
+// TODO REMOVE?
 void framebuffer_size_callback(GLFWwindow* window, int width, int height)
 {
     glViewport(0, 0, width, height);

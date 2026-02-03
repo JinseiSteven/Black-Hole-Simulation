@@ -7,15 +7,17 @@
 #include <memory>
 #include <glm/vec3.hpp>
 
-#include "Camera.h"
-#include "Shader.h"
+class Camera;
+class Shader;
 class Simulation;
+class Settings;
 
 
 class Renderer {
 public:
     Renderer(
-        const Camera* camera,
+        const Camera& camera,
+        const Settings& settings,
         unsigned int texture_width,
         unsigned int texture_height,
         const char* quadVertexPath,
@@ -30,13 +32,15 @@ public:
 
     [[nodiscard]] unsigned int GetScreenTextureID() const;
 private:
-    const Camera* m_camera;
+    const Camera& m_camera;
+    const Settings& m_settings;
     std::unique_ptr<Shader> m_radial_shader;
     int m_current_rings;
 
     // our GP buffers for the perspective radial
     unsigned int m_radial_VAO{0}, m_radial_VBO{0}, m_radial_EBO{0};
     int m_gridIndexCount{0};
+    bool m_grid_enabled{true};
 
     std::unique_ptr<Shader> m_quad_shader;
 

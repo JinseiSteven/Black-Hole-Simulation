@@ -17,69 +17,76 @@ public:
     void SetRenderScale(float scale);
     void SetRadialMeshResolution(int rings, int spokes);
     void SetRadialMeshEnabled(bool enabled);
-    void SetRadialMeshOpacity(float opacity);
+    void SetRadialMeshColor(const glm::vec4& color);
 
     // sim
     void SetBlackHoleMass(double mass_kg);
     void SetMaxRaySteps(int steps);
     void SetRayStepSize(float step_size);
+    void SetPlanetAmbientLight(float ambient);
 
     // disk
     void SetDiskRadii(float inner_radius, float outer_radius);
-    void SetDiskHeight(float min_height, float max_height);
+    void SetDiskHeight(float height);
     void SetDiskRenderMode(unsigned int mode);
     void SetDiskAbsorptionCoefficient(float coefficient);
     void SetDiskMarchSettings(unsigned int max_march_steps, float march_step_size);
     void SetDiskColors(glm::vec4 color_cool, glm::vec4 color_hot);
+    void SetDiskUseNoise(bool use_noise);
+
+    void SetOrbitSensitivity(float sensitivity);
+    void SetZoomSensitivity(float sensitivity);
 
     // conversion
-    float RealToSim(double real_meters) const;
-    double SimToReal(float sim_units) const;
+    [[nodiscard]] float RealToSim(double real_meters) const;
+    [[nodiscard]] double SimToReal(float sim_units) const;
 
-    double GetRealRsMeters() const;
-    double GetMetersPerSimUnit() const;
-    double GetBlackHoleMass() const;
+    [[nodiscard]] double GetRealRsMeters() const;
+    [[nodiscard]] double GetMetersPerSimUnit() const;
+    [[nodiscard]] double GetBlackHoleMass() const;
 
-    float GetDiskInnerRadius() const { return m_disk.inner_radius * GetSimRs(); }
-    float GetDiskOuterRadius() const { return m_disk.outer_radius * GetSimRs(); }
-    float GetDiskMinHeight() const { return m_disk.min_height * GetSimRs(); }
-    float GetDiskMaxHeight() const { return m_disk.max_height * GetSimRs(); }
-    unsigned int GetDiskRenderMode() const { return m_disk.renderMode; }
-    float GetDiskAbsorptionCoeff() const { return m_disk.absorptionCoeff; }
-    unsigned int GetDiskMaxMarchSteps() const { return m_disk.maxMarchSteps; }
-    float GetDiskMarchStepSize() const { return m_disk.marchStepSize; }
-    glm::vec4 GetDiskColorCool() const { return m_disk.colorCool; }
-    glm::vec4 GetDiskColorHot() const { return m_disk.colorHot; }
-    float GetDiskInnerRadiusRatio() const { return m_disk.inner_radius; }
-    float GetDiskOuterRadiusRatio() const { return m_disk.outer_radius; }
-    float GetDiskMinHeightRatio() const { return m_disk.min_height; }
-    float GetDiskMaxHeightRatio() const { return m_disk.max_height; }
+    [[nodiscard]] float GetDiskInnerRadius() const { return m_disk.inner_radius * GetSimRs(); }
+    [[nodiscard]] float GetDiskOuterRadius() const { return m_disk.outer_radius * GetSimRs(); }
+    [[nodiscard]] float GetDiskHeight() const { return m_disk.height * GetSimRs(); }
+    [[nodiscard]] unsigned int GetDiskRenderMode() const { return m_disk.renderMode; }
+    [[nodiscard]] float GetDiskAbsorptionCoeff() const { return m_disk.absorptionCoeff; }
+    [[nodiscard]] unsigned int GetDiskMaxMarchSteps() const { return m_disk.maxMarchSteps; }
+    [[nodiscard]] float GetDiskMarchStepSize() const { return m_disk.marchStepSize; }
+    [[nodiscard]] glm::vec4 GetDiskColorCool() const { return m_disk.colorCool; }
+    [[nodiscard]] glm::vec4 GetDiskColorHot() const { return m_disk.colorHot; }
+    [[nodiscard]] float GetDiskInnerRadiusRatio() const { return m_disk.inner_radius; }
+    [[nodiscard]] float GetDiskOuterRadiusRatio() const { return m_disk.outer_radius; }
+    [[nodiscard]] float GetDiskHeightRatio() const { return m_disk.height; }
+    [[nodiscard]] bool GetDiskUseNoise() const { return m_disk.useNoise; }
 
-    float GetRenderScale() const { return m_render.render_scale; }
-    int GetRadialMeshRings() const { return m_render.radial_mesh_rings; }
-    int GetRadialMeshSpokes() const { return m_render.radial_mesh_spokes; }
-    bool IsRadialMeshEnabled() const { return m_render.enable_radial_mesh; }
-    float GetRadialMeshOpacity() const { return m_render.radial_mesh_opacity; }
+    [[nodiscard]] float GetRenderScale() const { return m_render.render_scale; }
+    [[nodiscard]] int GetRadialMeshRings() const { return m_render.radial_mesh_rings; }
+    [[nodiscard]] int GetRadialMeshSpokes() const { return m_render.radial_mesh_spokes; }
+    [[nodiscard]] bool IsRadialMeshEnabled() const { return m_render.enable_radial_mesh; }
+    [[nodiscard]] glm::vec4 GetRadialMeshColor() const { return m_render.radial_mesh_color; }
 
-    int GetMaxRaySteps() const { return m_simulation.max_ray_steps; }
-    float GetRayStepSize() const { return m_simulation.ray_step_size; }
-    float GetSimRs() const;
-    float GetSimWorldRadius() const;
-    float GetRadialMeshInnerRadius() const;
-    float GetRadialMeshOuterRadius() const;
+    [[nodiscard]] int GetMaxRaySteps() const { return m_simulation.max_ray_steps; }
+    [[nodiscard]] float GetRayStepSize() const { return m_simulation.ray_step_size; }
+    [[nodiscard]] float GetPlanetAmbientLight() const { return m_simulation.planet_ambient_light; }
+    [[nodiscard]] float GetSimRs() const;
+    [[nodiscard]] float GetSimWorldRadius() const;
+    [[nodiscard]] float GetRadialMeshInnerRadius() const;
+    [[nodiscard]] float GetRadialMeshOuterRadius() const;
 
-    float GetOrbitSensitivity() const { return m_camera.orbit_sensitivity; }
-    float GetZoomSensitivity() const { return m_camera.zoom_sensitivity; }
+    [[nodiscard]] float GetOrbitSensitivity() const { return m_camera.orbit_sensitivity; }
+    [[nodiscard]] float GetZoomSensitivity() const { return m_camera.zoom_sensitivity; }
 
-    unsigned int GetSimulationVersion() const { return m_simulation_version; }
-    unsigned int GetDiskVersion() const { return m_disk_version; }
-
-    bool ConsumeRenderChanges() const;
+    [[nodiscard]] unsigned int GetSimulationVersion() const { return m_simulation_version; }
+    [[nodiscard]] unsigned int GetDiskVersion() const { return m_disk_version; }
+    [[nodiscard]] unsigned int GetRenderVersion() const { return m_render_version; }
+    [[nodiscard]] unsigned int GetCameraVersion() const { return m_camera_version; }
 
 private:
 
     unsigned int m_simulation_version{0};
     unsigned int m_disk_version{0};
+    unsigned int m_render_version{0};
+    unsigned int m_camera_version{0};
 
     void RecalculateRs();
 
@@ -93,17 +100,18 @@ private:
         double black_hole_mass_kg;
         int max_ray_steps;
         float ray_step_size;
+        float planet_ambient_light;
     } m_simulation{};
 
     struct AccretionDiskParams {
         float inner_radius;
         float outer_radius;
-        float min_height;
-        float max_height;
+        float height;
         unsigned int renderMode;
         float absorptionCoeff;
         unsigned int maxMarchSteps;
         float marchStepSize;
+        bool useNoise;
         glm::vec4 colorHot;
         glm::vec4 colorCool;
     } m_disk{};
@@ -113,15 +121,13 @@ private:
         int radial_mesh_rings;
         int radial_mesh_spokes;
         bool enable_radial_mesh;
-        float radial_mesh_opacity;
+        glm::vec4 radial_mesh_color;
     } m_render{};
 
     struct CameraParams {
         float orbit_sensitivity;
         float zoom_sensitivity;
     } m_camera{};
-
-    mutable bool m_render_dirty;
 };
 
 
