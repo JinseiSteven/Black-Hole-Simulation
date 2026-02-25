@@ -59,10 +59,22 @@ bool UISystem::WantCaptureKeyboard() const {
 }
 
 void UISystem::CreateWindows() {
+    // we make a simple little hint header to show the user they can open the settings menu with tab
+    if (!m_settings_expanded) {
+        ImGui::SetNextWindowPos(ImVec2(5, 5), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowBgAlpha(0.5f);
+        ImGui::Begin("##hint", nullptr,
+            ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize |
+            ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
+            ImGuiWindowFlags_NoInputs);
+        ImGui::TextDisabled("Tab - Settings");
+        ImGui::End();
+        return;
+    }
+
     ImGui::SetNextWindowPos(ImVec2(5, 5), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowSizeConstraints(ImVec2(320, 0), ImVec2(320, FLT_MAX));
-    ImGui::SetNextWindowCollapsed(!m_settings_expanded);
-    ImGui::Begin("Settings", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
+    ImGui::Begin("Settings", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse);
 
     // ===== BLACK HOLE =====
     if (ImGui::CollapsingHeader("Black Hole")) {

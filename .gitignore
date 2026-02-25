@@ -87,12 +87,13 @@ Desktop.ini
 *.swo
 
 # ==================== Dependencies ====================
-# External libraries (if downloaded locally)
-external/
 third_party/
 vendor/
 lib/
 libs/
+
+# ImGui generated
+imgui.ini
 
 # ==================== Project Specific ====================
 # Logs
