@@ -59,11 +59,18 @@ public:
         unsigned int out_width,
         unsigned int out_height,
         unsigned int textureID,
-        const char* computePath);
+        const char* raytracePath,
+        const char* pinnPath);
     ~Simulation();
 
     // stepping function which will calculate the next step in the simulation
     void step(const Camera& camera);
+
+    void RenderPinnRows(const Camera& camera, unsigned int row_offset, unsigned int row_count);
+    void ClearOutputTexture();
+
+    [[nodiscard]] unsigned int GetRenderWidth() const { return out_width; }
+    [[nodiscard]] unsigned int GetRenderHeight() const { return out_height; }
 
     void UpdatePlanetsData(const std::vector<Utils::PlanetData>& planetData) const;
     void UpdateRadialHeightMap(int num_rings, float inner_radius, float outer_radius);
@@ -79,7 +86,8 @@ private:
     // vector representing the height map of the perspective grid (row-major)
     std::vector<float> m_radial_height_map;
 
-    std::unique_ptr<ComputeShader> m_compute_shader;
+    std::unique_ptr<ComputeShader> m_raytrace_shader;
+    std::unique_ptr<ComputeShader> m_pinn_shader;
     unsigned int output_texture_id;
 
     unsigned int cameraUBO{0}, simUBO{0}, diskUBO{0}, planetUBO{0};
@@ -92,6 +100,12 @@ private:
     void initTextureArray(int width, int height, int depth);
     void initPlanetTextures();
     void initNoiseTexture();
+
+    void updateCameraUBO(const Camera& camera);
+    void updateSimUBO();
+    void updateDiskUBO();
+    void bindOutputTexture();
+    void dispatch(unsigned int row_count);
 };
 
 

@@ -18,6 +18,7 @@ public:
     void NewFrame();
     [[nodiscard]] bool WantCaptureMouse() const;
     [[nodiscard]] bool WantCaptureKeyboard() const;
+    [[nodiscard]] bool IsPinnView() const { return m_pinn_view; }
     void CreateWindows();
     void ToggleSettingsWindow();
 
@@ -26,6 +27,7 @@ private:
     Settings& m_settings;
     ImGuiIO* m_io{nullptr};
     bool m_settings_expanded{false};
+    bool m_pinn_view{false};
     void SetupStyle();
     void ToggleKeyboardControls(bool enable);
 };

@@ -37,6 +37,12 @@ private:
 
     unsigned int m_last_render_version{0xFFFFFFFF};
 
+    bool m_pinn_active{false};
+    unsigned int m_pinn_row_cursor{0};
+
+    void PINNRenderCycle();
+    void BaseRenderCycle(float delta_time);
+
     void RebuildRadialMesh();
     [[nodiscard]] bool CheckRenderScale(int screen_width, int screen_height, float render_scale) const;
 

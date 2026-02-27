@@ -98,8 +98,12 @@ namespace Config {
     const std::string SCREENQUAD_FRAG = SHADER_PATH + "screenQuad.frag";
     const std::string RADIALMESH_VERT = SHADER_PATH + "radialMesh.vert";
     const std::string RADIALMESH_FRAG = SHADER_PATH + "radialMesh.frag";
-    const std::string COMPUTE_SIM = COMPUTE_PATH + "simulation.comp";
+    const std::string COMPUTE_RAYTRACE = COMPUTE_PATH + "simulation.comp";
 
+    const std::string COMPUTE_PINN = COMPUTE_PATH + "pinn.comp";
+
+    // ====================== PINN =======================
+    constexpr unsigned int SCAN_ROW_BATCH_SIZE = 10;
 }
 
 #endif //BLACK_HOLE_SIMULATION_CONFIG_H

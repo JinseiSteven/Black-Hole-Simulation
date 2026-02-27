@@ -1,0 +1,364 @@
+#version 430 core
+
+#define MAX_PLANETS 64
+
+// 8x8 = 64 invocations per work group
+layout (local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(rgba8, binding = 0) uniform image2D imgOutput;
+
+uniform float time;
+
+layout(std140, binding = 1) uniform Camera {
+    mat4 invProjectionMatrix;
+    mat4 invViewMatrix;
+    vec4 PosCartesian;
+} camera;
+
+layout(std140, binding = 2) uniform SimSettings {
+    int maxStepCount;
+    float stepSize;
+    float Rs;
+    float worldRadius;
+    float planetAmbientLight;
+} sim;
+
+layout(std140, binding = 3) uniform DiskSettings {
+    float innerRadius;
+    float outerRadius;
+    float height;
+    int renderMode;        // 0=flat, 1=angle, 2=raymarching
+    float absorptionCoeff;
+    int maxMarchSteps;
+    float marchStepSize;
+    int useNoise;          // 0=simple colors, 1=animated noise texture
+    vec4 colorHot;
+    vec4 colorCool;
+} disk;
+
+layout(std140, binding = 4) uniform Planets {
+    int numPlanets;
+    vec4 planets[MAX_PLANETS];  // xyz = position, w = radius
+} planets;
+
+// the texture array sampler
+uniform sampler2DArray planetTextureArray;
+
+// the noise texture we use in order to give the disk "ripples"
+uniform sampler2D noiseTexture;
+
+uniform int rowOffset;
+
+// mapping the planets to their respective textures
+uniform int textureIndexMap[MAX_PLANETS];
+
+const float PI = 3.14159265;
+const float HIT_THRESHOLD = 0.01f;
+const int PINN_MAX_STEP_COUNT = 100;
+
+
+struct RayState {
+    vec3 pos_0;
+    vec3 dir_0;
+    vec3 pos_i;
+    float lambda;
+};
+
+RayState initRay(vec3 pos, vec3 dir) {
+    RayState ray;
+
+    ray.pos_0 = pos;
+    ray.dir_0 = dir;
+    ray.pos_i = pos;
+    ray.lambda = 0;
+
+    return ray;
+}
+
+float getDiskHeight(float r_disk) {
+
+    if (r_disk < disk.innerRadius || r_disk > disk.outerRadius) {
+        return 0.0;
+    }
+
+    // power-law flaring: H(r) = H0 * (r/r_inner)^beta
+    float beta = 1.2;  // Typical for accretion disks
+    float H = disk.height * pow(r_disk / disk.innerRadius, beta);
+
+    // taper off at the end, so no sharp cutoff
+    float taper = 1.0 - smoothstep(disk.outerRadius * 0.8, disk.outerRadius, r_disk);
+
+    return H * taper;
+}
+
+float diskSDF(vec3 pos) {
+    float r_xz = length(pos.xz);
+
+    // radial distance to the disk, should be 0 if we are above or below it
+    float r_clamped = clamp(r_xz, disk.innerRadius, disk.outerRadius);
+    float radial_dist = abs(r_xz - r_clamped);
+
+    // vertical distance
+    float H = (disk.renderMode == 0) ? 0.01 : getDiskHeight(r_clamped);
+    float vertical_dist = abs(pos.y) - H;
+
+    // inside radii, just vertical distance
+    if (radial_dist == 0.0) {
+        return vertical_dist;
+    }
+
+    return length(vec2(radial_dist, max(vertical_dist, 0.0)));
+}
+
+float sceneSDF(vec3 pos) {
+    // outer-bounds distance
+    float d = sim.worldRadius - length(pos);
+    if (d < HIT_THRESHOLD) return d;
+
+    // planet distance
+    for (int i = 0; i < planets.numPlanets; i++) {
+        d = min(d, length(pos - planets.planets[i].xyz) - planets.planets[i].w);
+        if (d < HIT_THRESHOLD) return d;
+    }
+
+    // black hole distance
+    d = min(d, length(pos) - sim.Rs);
+    if (d < HIT_THRESHOLD) return d;
+
+    // accretion disk distance
+    d = min(d, diskSDF(pos));
+
+    return d;
+}
+
+void stepRay(inout RayState ray) {
+    float d = sceneSDF(ray.pos_i);
+    if (d < HIT_THRESHOLD) return;
+    ray.lambda += d;
+    ray.pos_i = model(ray.pos_0, ray.dir_0, ray.lambda);
+}
+
+vec4 getDiskMaterial(vec3 pos, float r_disk) {
+    float normalized_r = (r_disk - disk.innerRadius) / (disk.outerRadius - disk.innerRadius);
+    float T_linear = 1.0 - normalized_r;
+    vec3 color = mix(disk.colorCool.rgb, disk.colorHot.rgb, clamp(T_linear, 0.0, 1.0));
+    float geometry_fade = 1.0 - smoothstep(0.8, 1.0, normalized_r);
+
+    // simple mode - no noise texture (previously the commented-out version)
+    if (disk.useNoise == 0) {
+        return vec4(color, geometry_fade);
+    }
+
+    // animated noise mode
+    // didnt actually know this was a thing, but is faster than taking sqrt and breuk
+    float omega = inversesqrt(r_disk * r_disk * r_disk);
+
+    float GM_proxy = sqrt(sim.Rs * 0.5) * 5.0; // with a time scale factor lol
+
+    // angle change = angular velocity * time
+    float angle_offset = omega * GM_proxy * time * 10.0f;
+
+    float angle = atan(pos.z, pos.x);
+
+    // now we subtract the offset to rotate in the direction of particle orbit
+    angle -= angle_offset;
+
+    float noise_u = (angle + PI) / (2.0 * PI);
+    float noise_v = normalized_r;
+
+    // extra twist to seperate rings visually
+    float twist = 1.0 / (normalized_r + 0.2);
+    vec2 uv = vec2(noise_u + twist * 0.5, noise_v * 4.0); // TODO 4.0 now, needs to be calculated too but higher value gives thinner/more rings
+
+    float n1 = texture(noiseTexture, uv).r;
+    float n2 = texture(noiseTexture, uv * 2.0).r * 0.5;
+    float turbulence = (n1 + n2) / 1.5;
+
+    // exaggerate the opacity, so we get clearer transparent and opaque rings
+    float density_map = smoothstep(0.3, 0.7, turbulence);
+    float final_density = density_map * geometry_fade;
+
+    // TODO, vergeet deze niet lmao want dit moet ook anders
+    color *= (0.5 + 0.5 * density_map);
+
+    return vec4(color, final_density);
+}
+
+bool checkDiskFlat(vec3 rayPos, vec3 prevPos, out vec4 finalColor) {
+    // we check whether the position change between a positive and negative y
+    if (rayPos.y * prevPos.y >= 0.0) {
+        return false;
+    }
+
+    // solve for t in order to get exact point of crossing
+    float t = prevPos.y / (prevPos.y - rayPos.y);
+    vec3 crossPoint = mix(prevPos, rayPos, t);
+
+    float r_disk = length(crossPoint.xz);
+
+    // if falling outside the disk radii, we can ignore
+    if (r_disk < disk.innerRadius || r_disk > disk.outerRadius) {
+        return false;
+    }
+
+    // temperature based color
+    finalColor = getDiskMaterial(crossPoint, r_disk);
+    return true;
+}
+
+bool checkDiskAngleBased(vec3 rayPos, vec3 prevPos, out vec4 finalColor) {
+    float r_disk = length(rayPos.xz);
+    float H = getDiskHeight(r_disk);
+
+    // checking if the ray falls within the disk height at radius r
+    if (abs(rayPos.y) < H) {
+        vec4 material = getDiskMaterial(rayPos, r_disk);
+
+        // however when looking at it from the side, we wan to compensate with extra opacity since the disk is a volumetric cloud
+        vec3 rayStep = rayPos - prevPos;
+        float cos_angle = abs(rayStep.y) / length(rayStep);
+
+        float opacity = mix(1.0, material.a, cos_angle);
+
+        finalColor = vec4(material.rgb, opacity);
+        return true;
+    }
+
+    finalColor = vec4(0.0);
+    return false;
+}
+
+bool checkDiskIntersection(inout RayState ray, vec3 pos, vec3 prevPos, out vec4 finalColor) {
+    // flat disk
+    if (disk.renderMode == 0) {
+        return checkDiskFlat(pos, prevPos, finalColor);
+    }
+    // angle-based for all volumetric modes (raymarching not supported with PINN stepping)
+    return checkDiskAngleBased(pos, prevPos, finalColor);
+}
+
+vec2 getSphereUV(vec3 hitPos, vec3 center) {
+    vec3 n = normalize(hitPos - center);
+
+    // azimuth, from 0 to 1 now
+    float u = 0.5 + atan(n.z, n.x) / (2.0 * PI);
+
+    // inclination, also from 0 to 1 now
+    float v = 0.5 + asin(n.y) / PI;
+
+    // maybe flip? vec2(1.0 - u, v);
+    return vec2(u, v);
+}
+
+vec3 findSurfaceHit(vec3 start, vec3 end, vec3 center, float radius) {
+    vec3 d = end - start;
+    vec3 f = start - center;
+
+    float a = dot(d, d);
+    float b = 2.0 * dot(f, d);
+    float c = dot(f, f) - radius * radius;
+
+    float discriminant = b * b - 4.0 * a * c;
+
+    // if discriminant is smaller than 0, it means we have no intersection, which would be wrong lol
+    if (discriminant < 0.0) return end;
+
+    // only want the negative solution since we want the first intersection
+    discriminant = sqrt(discriminant);
+    float t = (-b - discriminant) / (2.0 * a);
+
+    return start + d * t;
+}
+
+bool checkPlanetIntersection(vec3 pos, vec3 prevPos, out vec4 finalColor) {
+    for (int i = 0; i < planets.numPlanets; i++) {
+        vec4 planet = planets.planets[i];
+        if (distance(pos, planet.xyz) < planet.w) {
+
+            vec3 hitPos = findSurfaceHit(prevPos, pos, planet.xyz, planet.w);
+
+            vec2 uv = getSphereUV(hitPos, planet.xyz);
+
+            vec3 albedo = texture(planetTextureArray, vec3(uv, float(textureIndexMap[i]))).rgb;
+            vec3 normal = normalize(hitPos - planet.xyz);
+            vec3 lightDir = normalize(-hitPos);
+            float diffuse = max(dot(normal, lightDir), sim.planetAmbientLight);
+
+            // 4. Combine
+            finalColor = vec4(albedo * diffuse, 1.0f);
+            return true;
+        }
+    }
+    return false;
+}
+
+vec4 traceRay(vec3 rayPos, vec3 rayDir) {
+    // the initial ray will have alpha of zero so it is completely seethrough
+    vec4 finalColor = vec4(1.0f, 0.0f, 0.0f, 0.5f);
+
+    RayState ray = initRay(rayPos, rayDir);
+    vec3 prevPos = rayPos;
+
+    for (int i = 0; i < PINN_MAX_STEP_COUNT; i++) {
+        stepRay(ray);
+
+        // case 1: hit the black hole
+        if (length(ray.pos_i) < sim.Rs) {
+            return vec4(0.0, 0.0, 0.0, 1.0);
+        }
+
+        // case 2: hit the accretion disk
+        if (checkDiskIntersection(ray, ray.pos_i, prevPos, finalColor)) {
+            break;
+        }
+
+        // case 3: hit a planet
+        if (checkPlanetIntersection(ray.pos_i, prevPos, finalColor)) {
+            break;
+        }
+
+        // case 4: ray out of bounds, so just emptiness (only if outwards shooting)
+        if (length(ray.pos_i) > sim.worldRadius && dot(ray.pos_i - prevPos, ray.pos_i) > 0.0) {
+            break;
+        }
+
+        prevPos = ray.pos_i;
+    }
+    return finalColor;
+}
+
+void main()
+{
+    // because we make the workgroup collection on the GPU aroundabout the same dimensions as our final texture,
+    // we can use the invocations global coordinates to assign every invocation a pixel
+    ivec2 texelCoord = ivec2(gl_GlobalInvocationID.x, gl_GlobalInvocationID.y + rowOffset);
+    ivec2 dims = imageSize(imgOutput);
+
+    // because we are not sure whether the assigned workgroup dimensions matches our output image dimensions,
+    // we need to check so we dont try to assign pixel values out of bounds
+    if (dims.x <= texelCoord.x || dims.y <= texelCoord.y) {
+        return;
+    }
+
+    // currently the coordinates for are in screen-space, so we want them in NDC (normalized device coordinates)
+    // 0..dims -> 0..1 -> -1..1 (NDC)
+    float u = (float(texelCoord.x) / float(dims.x)) * 2.0 - 1.0;
+    float v = (float(texelCoord.y) / float(dims.y)) * 2.0 - 1.0;
+
+    // this is now the vector in clip space in homogeneous coordinates
+    // the -1.0 Z value comes from the fact that clipSpace goes from -1.0 (Near clip) to 1.0 (Far clip)
+    vec4 rayClip = vec4(u, v, -1.0, 1.0);
+
+    // now to go from clip space to view space, using our inverse projection matrix
+    // and from view space to world space using our inverse view matrix (rigidbody transformation)
+    vec4 homogRayWorld = camera.invViewMatrix * camera.invProjectionMatrix * rayClip;
+    vec3 rayWorld = homogRayWorld.xyz / homogRayWorld.w;
+
+    // now to get the direction of the vector, starting from the camera center
+    vec3 rayDir = normalize(rayWorld - camera.PosCartesian.xyz);
+
+    // now we have the pixelposition in world space, we can pass this into our function to shoot our ray and return a color
+    vec4 finalColor = traceRay(camera.PosCartesian.xyz, rayDir);
+
+    imageStore(imgOutput, texelCoord, finalColor);
+}

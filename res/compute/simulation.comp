@@ -324,6 +324,7 @@ bool checkDiskRaymarching(vec3 entryPos, inout RayState ray, out vec4 finalColor
     return accumulated.a > 0.01;
 }
 
+
 bool checkDiskIntersection(inout RayState ray, vec3 pos, vec3 prevPos, out vec4 finalColor) {
     // flat disk
     if (disk.renderMode == 0) {

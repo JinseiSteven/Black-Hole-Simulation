@@ -59,6 +59,26 @@ bool UISystem::WantCaptureKeyboard() const {
 }
 
 void UISystem::CreateWindows() {
+    if (m_pinn_view) {
+        ImGui::SetNextWindowPos(ImVec2(5, 5));
+        ImGui::SetNextWindowBgAlpha(0.5f);
+        ImGui::Begin("##pinn_overlay", nullptr,
+            ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize |
+            ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize);
+
+        // TODO we also need to lock the actual save button until the render is done for this frame, since we dont want half-baked renders
+        if (ImGui::Button("Save")) {
+            // TODO
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Back")) {
+            m_pinn_view = false;
+
+        }
+        ImGui::End();
+        return;
+    }
+
     // we make a simple little hint header to show the user they can open the settings menu with tab
     if (!m_settings_expanded) {
         ImGui::SetNextWindowPos(ImVec2(5, 5), ImGuiCond_FirstUseEver);
@@ -180,6 +200,13 @@ void UISystem::CreateWindows() {
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Text("%.1f FPS (%.2f ms)", m_io->Framerate, 1000.0f / m_io->Framerate);
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    if (ImGui::Button("Render with PINN", ImVec2(-1, 0))) {
+        m_pinn_view = true;
+        // TODO
     }
 
     ImGui::End();

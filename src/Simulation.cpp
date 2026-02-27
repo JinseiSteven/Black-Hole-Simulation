@@ -20,11 +20,13 @@ Simulation::Simulation(
     const unsigned int out_width,
     const unsigned int out_height,
     const unsigned int textureID,
-    const char* computePath) :
+    const char* raytracePath,
+    const char* pinnPath) :
     m_settings(settings),
     out_width(out_width),
     out_height(out_height),
-    m_compute_shader(std::make_unique<ComputeShader>(computePath)),
+    m_raytrace_shader(std::make_unique<ComputeShader>(raytracePath)),
+    m_pinn_shader(std::make_unique<ComputeShader>(pinnPath)),
     output_texture_id(textureID) {
     const int rings = m_settings.GetRadialMeshRings();
     m_radial_height_map.resize(rings);
@@ -146,14 +148,14 @@ void Simulation::initPlanetTextures() {
         }
     }
 
-    m_compute_shader->use();
+    m_raytrace_shader->use();
 
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D_ARRAY, planet_texture_array_id);
     glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
 
     // like before, the int we set tells the shader what texture slot we have loaded our sampler data
-    m_compute_shader->SetInt("planetTextureArray", 1);
+    m_raytrace_shader->SetInt("planetTextureArray", 1);
 }
 
 void Simulation::initNoiseTexture() {
@@ -174,7 +176,7 @@ void Simulation::initNoiseTexture() {
         glGenTextures(1, &noise_texture_id);
     }
 
-    m_compute_shader->use();
+    m_raytrace_shader->use();
     glActiveTexture(GL_TEXTURE2);
     glBindTexture(GL_TEXTURE_2D, noise_texture_id);
 
@@ -196,14 +198,10 @@ void Simulation::initNoiseTexture() {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
-    m_compute_shader->SetInt("noiseTexture", 2);
+    m_raytrace_shader->SetInt("noiseTexture", 2);
 }
 
-void Simulation::step(const Camera& camera) {
-    m_compute_shader->use();
-
-    m_compute_shader->SetFloat("time", static_cast<float>(glfwGetTime()));
-
+void Simulation::updateCameraUBO(const Camera& camera) {
     const CameraUniforms cameraData = {
         .invProjectionMatrix = camera.GetInvProjectionMatrix(),
         .invViewMatrix = camera.GetInvViewMatrix(),
@@ -211,7 +209,29 @@ void Simulation::step(const Camera& camera) {
     };
     glBindBuffer(GL_UNIFORM_BUFFER, cameraUBO);
     glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(CameraUniforms), &cameraData);
+}
 
+void Simulation::bindOutputTexture() {
+    glBindImageTexture(
+        0,                 // binding = 0
+        output_texture_id, // texture ID
+        0,                 // mipmap level (0 = base)
+        GL_FALSE,          // 3D/array texture? No
+        0,                 // if so, what layer?
+        GL_WRITE_ONLY,     // access
+        GL_RGBA8           // data format
+    );
+}
+
+void Simulation::dispatch(unsigned int row_count) {
+    const GLuint numGroupsX = (out_width + Config::WORKGROUP_SIZE_X - 1) / Config::WORKGROUP_SIZE_X;
+    const GLuint numGroupsY = (row_count + Config::WORKGROUP_SIZE_Y - 1) / Config::WORKGROUP_SIZE_Y;
+
+    glDispatchCompute(numGroupsX, numGroupsY, 1);
+    glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+}
+
+void Simulation::updateSimUBO() {
     if (m_settings.GetSimulationVersion() != m_lastSimVersion) {
         const SimSettingsUniforms simData = {
             .maxStepCount = m_settings.GetMaxRaySteps(),
@@ -224,7 +244,9 @@ void Simulation::step(const Camera& camera) {
         glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(SimSettingsUniforms), &simData);
         m_lastSimVersion = m_settings.GetSimulationVersion();
     }
+}
 
+void Simulation::updateDiskUBO() {
     if (m_settings.GetDiskVersion() != m_lastDiskVersion) {
         const DiskSettingsUniforms diskData = {
             .innerRadius = m_settings.GetDiskInnerRadius(),
@@ -242,22 +264,37 @@ void Simulation::step(const Camera& camera) {
         glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(DiskSettingsUniforms), &diskData);
         m_lastDiskVersion = m_settings.GetDiskVersion();
     }
+}
 
-    glBindImageTexture(
-        0,                 // binding = 0
-        output_texture_id, // texture ID
-        0,                 // mipmap level (0 = base)
-        GL_FALSE,          // 3D/array texture? No
-        0,                 // if so, what layer?
-        GL_WRITE_ONLY,     // access
-        GL_RGBA8           // data format
-    );
+void Simulation::step(const Camera& camera) {
+    m_raytrace_shader->use();
 
-    const GLuint numGroupsX = (out_width + Config::WORKGROUP_SIZE_X - 1) / Config::WORKGROUP_SIZE_X;
-    const GLuint numGroupsY = (out_height + Config::WORKGROUP_SIZE_Y - 1) / Config::WORKGROUP_SIZE_Y;
+    m_raytrace_shader->SetFloat("time", static_cast<float>(glfwGetTime()));
 
-    glDispatchCompute(numGroupsX, numGroupsY, 1);
-    glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+    updateCameraUBO(camera);
+    updateSimUBO();
+    updateDiskUBO();
+
+    bindOutputTexture();
+    dispatch(out_height);
+}
+
+void Simulation::RenderPinnRows(const Camera& camera, unsigned int row_offset, unsigned int row_count) {
+    // so now we need to dispatch the GPU computation for the different rows of the output image, starting from the row_offset
+    m_pinn_shader->use();
+
+    m_pinn_shader->SetInt("rowOffset", static_cast<int>(row_offset));
+
+    updateCameraUBO(camera);
+    updateSimUBO();
+    updateDiskUBO();
+    bindOutputTexture();
+    dispatch(row_count);
+}
+
+void Simulation::ClearOutputTexture() {
+    GLubyte clear[4] = {15, 15, 15, 255};
+    glClearTexImage(output_texture_id, 0, GL_RGBA, GL_UNSIGNED_BYTE, clear);
 }
 
 void Simulation::UpdatePlanetsData(const std::vector<Utils::PlanetData>& planetData) const {
@@ -279,12 +316,12 @@ void Simulation::UpdatePlanetsData(const std::vector<Utils::PlanetData>& planetD
         textureIndexMap.push_back(tex_index);
     }
 
-    m_compute_shader->use();
+    m_raytrace_shader->use();
 
     glBindBuffer(GL_UNIFORM_BUFFER, planetUBO);
     glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(PlanetUniforms), &data);
 
-    m_compute_shader->Set1iv("textureIndexMap", textureIndexMap);
+    m_raytrace_shader->Set1iv("textureIndexMap", textureIndexMap);
 }
 
 void Simulation::UpdateRadialHeightMap(const int num_rings, const float inner_radius, const float outer_radius) {

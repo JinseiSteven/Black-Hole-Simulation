@@ -33,7 +33,8 @@ Application::Application(const int screen_width, const int screen_height) :
         static_cast<unsigned int>(static_cast<float>(screen_width) * m_settings.GetRenderScale()),
         static_cast<unsigned int>(static_cast<float>(screen_height) * m_settings.GetRenderScale()),
         m_renderer.GetScreenTextureID(),
-        Config::COMPUTE_SIM.c_str())
+        Config::COMPUTE_RAYTRACE.c_str(),
+        Config::COMPUTE_PINN.c_str())
 {
     if (!CheckRenderScale(Config::SCREEN_WIDTH, Config::SCREEN_HEIGHT, Config::RENDER_SCALE)) {
         throw std::runtime_error("Render scale not supported. The render texture needs to be divisible by the GPU workgroups");
@@ -57,6 +58,25 @@ void Application::Step() {
 
     m_ui_system.NewFrame();
 
+    if (m_ui_system.IsPinnView()) {
+        PINNRenderCycle();
+    }
+    else {
+        BaseRenderCycle(delta_time);
+    }
+
+    // ui windows
+    m_ui_system.CreateWindows();
+
+    // rendering
+    m_renderer.draw();
+    m_ui_system.Draw();
+
+    m_window.swapBuffers();
+    m_input_state.clear();
+}
+
+void Application::BaseRenderCycle(const float delta_time) {
     if (!m_ui_system.WantCaptureMouse() && !m_input_state.consumed) {
         // inputhandler will consume the input then if its not consumed already
         m_input_handler.ProcessInput(m_input_state);
@@ -70,16 +90,19 @@ void Application::Step() {
 
     // simulating
     m_simulation.step(m_camera);
+}
 
-    // ui windows
-    m_ui_system.CreateWindows();
+void Application::PINNRenderCycle() {
+    if (!m_pinn_active) {
+        m_pinn_active = true;
+        m_pinn_row_cursor = 0;
 
-    // rendering
-    m_renderer.draw();
-    m_ui_system.Draw();
+        // making it black so we get a nice clear render setup
+        m_simulation.ClearOutputTexture();
+    }
 
-    m_window.swapBuffers();
-    m_input_state.clear();
+    unsigned int row_count = std::min(m_simulation.GetRenderHeight() - m_pinn_row_cursor, Config::SCAN_ROW_BATCH_SIZE);
+    m_simulation.RenderPinnRows(m_camera, m_pinn_row_cursor, row_count);
 }
 
 void Application::RebuildRadialMesh() {
