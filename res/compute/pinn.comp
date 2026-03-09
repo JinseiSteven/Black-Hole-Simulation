@@ -52,26 +52,155 @@ uniform int rowOffset;
 // mapping the planets to their respective textures
 uniform int textureIndexMap[MAX_PLANETS];
 
+// === PINN WEIGHTS (SSBO) ===
+layout(std430, binding = 5) buffer FarWeights { float wf[]; };
+layout(std430, binding = 6) buffer NearWeights { float wn[]; };
+
+uniform float far_pos_scale;
+uniform float far_lmbda_scale;
+uniform float near_pos_scale;
+uniform float near_lmbda_scale;
+// === END PINN WEIGHTS ===
+
 const float PI = 3.14159265;
 const float HIT_THRESHOLD = 0.01f;
-const int PINN_MAX_STEP_COUNT = 100;
+const int PINN_MAX_STEP_COUNT = 10;  // reduced to avoid TDR timeout
+const float NEAR_FIELD_RADIUS = 10.0;  // matches R_SPLIT from training
 
+// === PINN FORWARD PASS ===
+#define PINN_INPUT_DIM 127  // 6 + 6*2*10 + 1
+#define PINN_L 10
+
+float softplus(float x) {
+    if (x > 20.0) return x;
+    return log(1.0 + exp(x));
+}
+
+void fourierEncode(vec3 npos, vec3 dir, float nlmbda, out float inp[PINN_INPUT_DIM]) {
+    float spatial[6];
+    spatial[0] = npos.x; spatial[1] = npos.y; spatial[2] = npos.z;
+    spatial[3] = dir.x;  spatial[4] = dir.y;  spatial[5] = dir.z;
+
+    for (int i = 0; i < 6; i++) inp[i] = spatial[i];
+
+    int idx = 6;
+    for (int l = 0; l < PINN_L; l++) {
+        float freq = pow(2.0, float(l)) * PI;
+        for (int i = 0; i < 6; i++) {
+            inp[idx++] = sin(freq * spatial[i]);
+            inp[idx++] = cos(freq * spatial[i]);
+        }
+    }
+    inp[126] = nlmbda;
+}
+
+// far-field: 128 hidden, 6 layers
+vec3 model_far(vec3 pos, vec3 dir, float lmbda) {
+    vec3 npos = pos / far_pos_scale;
+    float nlmbda = lmbda / far_lmbda_scale;
+
+    float inp[PINN_INPUT_DIM];
+    fourierEncode(npos, dir, nlmbda, inp);
+
+    float h[128];
+    int off = 0;
+    for (int j = 0; j < 128; j++) {
+        float sum = 0.0;
+        for (int k = 0; k < PINN_INPUT_DIM; k++) {
+            sum += wf[off + j * PINN_INPUT_DIM + k] * inp[k];
+        }
+        h[j] = softplus(sum + wf[off + 128 * PINN_INPUT_DIM + j]);
+    }
+    off += 128 * PINN_INPUT_DIM + 128;
+
+    float h_new[128];
+    for (int layer = 0; layer < 6; layer++) {
+        for (int j = 0; j < 128; j++) {
+            float sum = 0.0;
+            for (int k = 0; k < 128; k++) {
+                sum += wf[off + j * 128 + k] * h[k];
+            }
+            h_new[j] = softplus(sum + wf[off + 128 * 128 + j]) + h[j];
+        }
+        for (int j = 0; j < 128; j++) h[j] = h_new[j];
+        off += 128 * 128 + 128;
+    }
+
+    vec3 out_pos;
+    for (int j = 0; j < 3; j++) {
+        float sum = 0.0;
+        for (int k = 0; k < 128; k++) {
+            sum += wf[off + j * 128 + k] * h[k];
+        }
+        out_pos[j] = sum + wf[off + 3 * 128 + j];
+    }
+
+    return (out_pos + npos) * far_pos_scale;  // skip connection: network learns correction from input pos
+}
+
+// near-field: 200 hidden, 12 layers (DISABLED for testing)
+#if 0
+vec3 model_near(vec3 pos, vec3 dir, float lmbda) {
+    vec3 npos = pos / near_pos_scale;
+    float nlmbda = lmbda / near_lmbda_scale;
+
+    float inp[PINN_INPUT_DIM];
+    fourierEncode(npos, dir, nlmbda, inp);
+
+    float h[200];
+    int off = 0;
+    for (int j = 0; j < 200; j++) {
+        float sum = 0.0;
+        for (int k = 0; k < PINN_INPUT_DIM; k++) {
+            sum += wn[off + j * PINN_INPUT_DIM + k] * inp[k];
+        }
+        h[j] = softplus(sum + wn[off + 200 * PINN_INPUT_DIM + j]);
+    }
+    off += 200 * PINN_INPUT_DIM + 200;
+
+    float h_new[200];
+    for (int layer = 0; layer < 12; layer++) {
+        for (int j = 0; j < 200; j++) {
+            float sum = 0.0;
+            for (int k = 0; k < 200; k++) {
+                sum += wn[off + j * 200 + k] * h[k];
+            }
+            h_new[j] = softplus(sum + wn[off + 200 * 200 + j]) + h[j];
+        }
+        for (int j = 0; j < 200; j++) h[j] = h_new[j];
+        off += 200 * 200 + 200;
+    }
+
+    vec3 out_pos;
+    for (int j = 0; j < 3; j++) {
+        float sum = 0.0;
+        for (int k = 0; k < 200; k++) {
+            sum += wn[off + j * 200 + k] * h[k];
+        }
+        out_pos[j] = sum + wn[off + 3 * 200 + j];
+    }
+
+    return (out_pos + npos) * near_pos_scale;  // skip connection: network learns correction from input pos
+}
+#endif
+
+// === END PINN FORWARD PASS ===
 
 struct RayState {
-    vec3 pos_0;
-    vec3 dir_0;
-    vec3 pos_i;
-    float lambda;
+    vec3 pos_0;     // initial position (reset on phase switch)
+    vec3 dir_0;     // initial direction (reset on phase switch)
+    vec3 pos_i;     // current position
+    float lambda;   // affine parameter (reset on phase switch)
+    bool near;      // true = using near-field model
 };
 
 RayState initRay(vec3 pos, vec3 dir) {
     RayState ray;
-
     ray.pos_0 = pos;
     ray.dir_0 = dir;
     ray.pos_i = pos;
     ray.lambda = 0;
-
+    ray.near = false;  // always start far-field (camera is far from BH)
     return ray;
 }
 
@@ -133,10 +262,26 @@ float sceneSDF(vec3 pos) {
 
 void stepRay(inout RayState ray) {
     float d = sceneSDF(ray.pos_i);
-    if (d < HIT_THRESHOLD) return;
+    if (d < HIT_THRESHOLD) d = HIT_THRESHOLD;
     ray.lambda += d;
-    ray.pos_i = model(ray.pos_0, ray.dir_0, ray.lambda);
+
+    // far-field only for now (near-field disabled for testing)
+    ray.pos_i = model_far(ray.pos_0, ray.dir_0, ray.lambda);
 }
+
+// DISABLED for testing — near-field causes register pressure / TDR
+#if 0
+void switchToNearField(inout RayState ray) {
+    float eps = 0.05;
+    vec3 p_fwd = model_far(ray.pos_0, ray.dir_0, ray.lambda + eps);
+    vec3 p_bwd = model_far(ray.pos_0, ray.dir_0, ray.lambda - eps);
+    vec3 vel = normalize((p_fwd - p_bwd) / (2.0 * eps));
+    ray.pos_0 = ray.pos_i;
+    ray.dir_0 = vel;
+    ray.lambda = 0.0;
+    ray.near = true;
+}
+#endif
 
 vec4 getDiskMaterial(vec3 pos, float r_disk) {
     float normalized_r = (r_disk - disk.innerRadius) / (disk.outerRadius - disk.innerRadius);
@@ -273,7 +418,7 @@ vec3 findSurfaceHit(vec3 start, vec3 end, vec3 center, float radius) {
 bool checkPlanetIntersection(vec3 pos, vec3 prevPos, out vec4 finalColor) {
     for (int i = 0; i < planets.numPlanets; i++) {
         vec4 planet = planets.planets[i];
-        if (distance(pos, planet.xyz) < planet.w) {
+        if (distance(pos, planet.xyz) < planet.w + HIT_THRESHOLD) {
 
             vec3 hitPos = findSurfaceHit(prevPos, pos, planet.xyz, planet.w);
 
@@ -292,9 +437,24 @@ bool checkPlanetIntersection(vec3 pos, vec3 prevPos, out vec4 finalColor) {
     return false;
 }
 
+bool checkDiskSegment(vec3 prevPos, vec3 curPos, out vec4 finalColor) {
+    vec3 seg = curPos - prevPos;
+    if (abs(seg.y) < 1e-6) return false;
+
+    float t = -prevPos.y / seg.y;
+    if (t < 0.0 || t > 1.0) return false;
+
+    vec3 crossPoint = prevPos + seg * t;
+    float r_disk = length(crossPoint.xz);
+
+    if (r_disk < disk.innerRadius || r_disk > disk.outerRadius) return false;
+
+    finalColor = getDiskMaterial(crossPoint, r_disk);
+    return true;
+}
+
 vec4 traceRay(vec3 rayPos, vec3 rayDir) {
-    // the initial ray will have alpha of zero so it is completely seethrough
-    vec4 finalColor = vec4(1.0f, 0.0f, 0.0f, 0.5f);
+    vec4 finalColor = vec4(0.0, 0.0, 0.0, 1.0);
 
     RayState ray = initRay(rayPos, rayDir);
     vec3 prevPos = rayPos;
@@ -303,12 +463,12 @@ vec4 traceRay(vec3 rayPos, vec3 rayDir) {
         stepRay(ray);
 
         // case 1: hit the black hole
-        if (length(ray.pos_i) < sim.Rs) {
+        if (length(ray.pos_i) < sim.Rs + HIT_THRESHOLD) {
             return vec4(0.0, 0.0, 0.0, 1.0);
         }
 
-        // case 2: hit the accretion disk
-        if (checkDiskIntersection(ray, ray.pos_i, prevPos, finalColor)) {
+        // case 2: disk — analytical segment check
+        if (checkDiskSegment(prevPos, ray.pos_i, finalColor)) {
             break;
         }
 
@@ -317,10 +477,15 @@ vec4 traceRay(vec3 rayPos, vec3 rayDir) {
             break;
         }
 
-        // case 4: ray out of bounds, so just emptiness (only if outwards shooting)
+        // case 4: ray out of bounds
         if (length(ray.pos_i) > sim.worldRadius && dot(ray.pos_i - prevPos, ray.pos_i) > 0.0) {
             break;
         }
+
+        // case 5: transition far -> near field (DISABLED — testing far-field only)
+        // if (!ray.near && length(ray.pos_i) < NEAR_FIELD_RADIUS) {
+        //     switchToNearField(ray);
+        // }
 
         prevPos = ray.pos_i;
     }
@@ -357,7 +522,6 @@ void main()
     // now to get the direction of the vector, starting from the camera center
     vec3 rayDir = normalize(rayWorld - camera.PosCartesian.xyz);
 
-    // now we have the pixelposition in world space, we can pass this into our function to shoot our ray and return a color
     vec4 finalColor = traceRay(camera.PosCartesian.xyz, rayDir);
 
     imageStore(imgOutput, texelCoord, finalColor);

@@ -2,6 +2,7 @@
 // Created by StephanVisser on 1/21/2026.
 //
 
+#include <iostream>
 #include "Application.h"
 #include "Config.h"
 #include "Utils.h"
@@ -55,13 +56,13 @@ void Application::Step() {
     const float delta_time = m_clock.tick();
 
     glfwPollEvents();
-
     m_ui_system.NewFrame();
 
     if (m_ui_system.IsPinnView()) {
         PINNRenderCycle();
     }
     else {
+        if (m_pinn_active) m_pinn_active = false;
         BaseRenderCycle(delta_time);
     }
 
@@ -97,12 +98,14 @@ void Application::PINNRenderCycle() {
         m_pinn_active = true;
         m_pinn_row_cursor = 0;
 
-        // making it black so we get a nice clear render setup
+        // making it black/greyish so we get a nice clear render setup
         m_simulation.ClearOutputTexture();
     }
 
+    if (m_pinn_row_cursor >= m_simulation.GetRenderHeight()) return;
     unsigned int row_count = std::min(m_simulation.GetRenderHeight() - m_pinn_row_cursor, Config::SCAN_ROW_BATCH_SIZE);
     m_simulation.RenderPinnRows(m_camera, m_pinn_row_cursor, row_count);
+    m_pinn_row_cursor += row_count;
 }
 
 void Application::RebuildRadialMesh() {

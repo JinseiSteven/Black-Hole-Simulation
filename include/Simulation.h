@@ -92,6 +92,13 @@ private:
 
     unsigned int cameraUBO{0}, simUBO{0}, diskUBO{0}, planetUBO{0};
 
+    // === PINN WEIGHTS ===
+    unsigned int farWeightsSSBO{0}, nearWeightsSSBO{0};
+    float far_pos_scale{1.0f}, far_lmbda_scale{1.0f};
+    float near_pos_scale{1.0f}, near_lmbda_scale{1.0f};
+    bool pinn_weights_loaded{false};
+    // === END PINN WEIGHTS ===
+
     std::map<std::string, int> m_textureMap;
     unsigned int planet_texture_array_id{0};
     unsigned int noise_texture_id{0};
@@ -100,6 +107,7 @@ private:
     void initTextureArray(int width, int height, int depth);
     void initPlanetTextures();
     void initNoiseTexture();
+    void initPinnWeights(); // === PINN WEIGHTS ===
 
     void updateCameraUBO(const Camera& camera);
     void updateSimUBO();

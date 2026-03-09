@@ -103,7 +103,9 @@ namespace Config {
     const std::string COMPUTE_PINN = COMPUTE_PATH + "pinn.comp";
 
     // ====================== PINN =======================
-    constexpr unsigned int SCAN_ROW_BATCH_SIZE = 10;
+    const std::string PINN_FAR_WEIGHTS_PATH = "res/models/pinn_far.bin";
+    const std::string PINN_NEAR_WEIGHTS_PATH = "res/models/pinn_near.bin";
+    constexpr unsigned int SCAN_ROW_BATCH_SIZE = 1;
 }
 
 #endif //BLACK_HOLE_SIMULATION_CONFIG_H
