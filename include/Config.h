@@ -17,6 +17,7 @@ namespace Config {
     const std::string TEXTURE_PATH = "res/textures/";
     const std::string PLANET_TEXTURE_PATH = "res/textures/planets/";
     constexpr double FPS_UPDATE_LATENCY = 0.5;
+    const std::string WINDOW_ICON_PATH = TEXTURE_PATH + "icon.png";
 
     // ==================== Camera ====================
     // camera internal params to make the internal matrix
@@ -90,8 +91,14 @@ namespace Config {
     constexpr float RENDER_SCALE = 0.5f;
 
     // workgroup sizes for the raytracer compute shader
+    // (NEEDS TO BE SYNCED MANUALLY WITH COMP SHADER)
     constexpr int WORKGROUP_SIZE_X = 8;
     constexpr int WORKGROUP_SIZE_Y = 8;
+
+    // workgroup sizes for the PINN compute shader (smaller to reduce register pressure especially on my laptop lol)
+    // (NEEDS TO BE SYNCED MANUALLY WITH COMP SHADER)
+    constexpr int PINN_WORKGROUP_SIZE_X = 4;
+    constexpr int PINN_WORKGROUP_SIZE_Y = 4;
 
     // shader paths
     const std::string SCREENQUAD_VERT = SHADER_PATH + "screenQuad.vert";
@@ -105,7 +112,7 @@ namespace Config {
     // ====================== PINN =======================
     const std::string PINN_FAR_WEIGHTS_PATH = "res/models/pinn_far.bin";
     const std::string PINN_NEAR_WEIGHTS_PATH = "res/models/pinn_near.bin";
-    constexpr unsigned int SCAN_ROW_BATCH_SIZE = 1;
+    constexpr unsigned int SCAN_ROW_BATCH_SIZE = 8;
 }
 
 #endif //BLACK_HOLE_SIMULATION_CONFIG_H

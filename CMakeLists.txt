@@ -48,7 +48,7 @@ set(SOURCES
         ${IMGUI_SRC}
 )
 
-add_executable(black_hole_simulation ${SOURCES})
+add_executable(black_hole_simulation ${SOURCES} res/icon.rc)
 target_link_libraries(black_hole_simulation PRIVATE ${DEPS})
 
 # adding our include folder

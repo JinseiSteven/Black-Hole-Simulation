@@ -6,7 +6,7 @@
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
 #include <iostream>
-#include <fstream> // === PINN WEIGHTS ===
+#include <fstream>
 
 #include "Simulation.h"
 #include "Camera.h"
@@ -27,17 +27,12 @@ Simulation::Simulation(
     out_width(out_width),
     out_height(out_height),
     m_raytrace_shader(std::make_unique<ComputeShader>(raytracePath)),
+    m_pinn_shader(std::make_unique<ComputeShader>(pinnPath)),
     output_texture_id(textureID) {
     const int rings = m_settings.GetRadialMeshRings();
     m_radial_height_map.resize(rings);
 
     initUniformBuffers();
-
-    // === DEBUG: trace pinn init ===
-    std::cout << "Compiling pinn shader..." << std::flush;
-    m_pinn_shader = std::make_unique<ComputeShader>(pinnPath);
-    std::cout << " OK" << std::endl;
-    // === END DEBUG ===
 
     initPlanetTextures();
     initNoiseTexture();
@@ -48,11 +43,10 @@ Simulation::~Simulation() {
     glDeleteBuffers(1, &cameraUBO);
     glDeleteBuffers(1, &simUBO);
     glDeleteBuffers(1, &diskUBO);
-    // === PINN WEIGHTS ===
     if (farWeightsSSBO) glDeleteBuffers(1, &farWeightsSSBO);
     if (nearWeightsSSBO) glDeleteBuffers(1, &nearWeightsSSBO);
-    // === END PINN WEIGHTS ===
 }
+
 
 void Simulation::initUniformBuffers() {
     glGenBuffers(1, &cameraUBO);
@@ -169,10 +163,9 @@ void Simulation::initPlanetTextures() {
     // like before, the int we set tells the shader what texture slot we have loaded our sampler data
     m_raytrace_shader->SetInt("planetTextureArray", 1);
 
-    // === PINN WEIGHTS: bind same textures to pinn shader ===
+    // we also need to bind it for the PINN shader
     m_pinn_shader->use();
     m_pinn_shader->SetInt("planetTextureArray", 1);
-    // === END ===
 }
 
 void Simulation::initNoiseTexture() {
@@ -212,16 +205,66 @@ void Simulation::initNoiseTexture() {
 
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glGenerateMipmap(GL_TEXTURE_2D);
 
     m_raytrace_shader->SetInt("noiseTexture", 2);
-
-    // === PINN WEIGHTS: bind same textures to pinn shader ===
-    m_pinn_shader->use();
-    m_pinn_shader->SetInt("noiseTexture", 2);
-    // === END ===
 }
+
+// we use this function to read the file format we made to encode the model weights in binary
+static bool loadWeightsFile(const std::string& path, unsigned int& ssbo, unsigned int binding,
+                            float& pos_scale, float& lmbda_scale, const std::string& label) {
+    std::ifstream file(path, std::ios::binary);
+    if (!file.is_open()) {
+        std::cout << "PINN " << label << " weights not found at " << path << std::endl;
+        return false;
+    }
+
+    // need to reinterpret so they accept the location, 4 bytes since ints and floats are 4 bytes
+    int hidden_dim, layer_count, L;
+    file.read(reinterpret_cast<char*>(&hidden_dim), 4);
+    file.read(reinterpret_cast<char*>(&layer_count), 4);
+    file.read(reinterpret_cast<char*>(&L), 4);
+    file.read(reinterpret_cast<char*>(&pos_scale), 4);
+    file.read(reinterpret_cast<char*>(&lmbda_scale), 4);
+
+    // 6 spatial values, + fourier encoding (6 inputs * 2 for sin/cos * L frequencies) + 1 raw lambda
+    int input_dim = 6 + 6 * 2 * L + 1;
+    int total_floats =
+        hidden_dim * input_dim + hidden_dim +                       // first layer weights + biases
+        layer_count * (hidden_dim * hidden_dim + hidden_dim) +      // residual layers
+        3 * hidden_dim + 3;                                         // output layer (xyz + bias)
+
+    // now we know how many floats we have in the binary, we read em out into our weights vector
+    std::vector<float> weights(total_floats);
+    file.read(reinterpret_cast<char*>(weights.data()), total_floats * sizeof(float));
+    file.close();
+
+    // and then we upload these weights via an SSBO to the GPU
+    glGenBuffers(1, &ssbo);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, total_floats * sizeof(float), weights.data(), GL_STATIC_READ);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, binding, ssbo);
+
+    std::cout << "PINN " << label << " loaded: hidden=" << hidden_dim
+              << " layers=" << layer_count
+              << " pos_scale=" << pos_scale
+              << " (" << total_floats * 4 / 1024 << " KB)" << std::endl;
+    return true;
+}
+
+void Simulation::initPinnWeights() {
+    bool far_ok = loadWeightsFile(Config::PINN_FAR_WEIGHTS_PATH, farWeightsSSBO, 5,
+                                   far_pos_scale, far_lmbda_scale, "far");
+    bool near_ok = loadWeightsFile(Config::PINN_NEAR_WEIGHTS_PATH, nearWeightsSSBO, 6,
+                                    near_pos_scale, near_lmbda_scale, "near");
+    pinn_weights_loaded = far_ok && near_ok;
+    if (!pinn_weights_loaded) {
+        std::cout << "PINN rendering disabled (missing weight files)" << std::endl;
+    }
+}
+
 
 void Simulation::updateCameraUBO(const Camera& camera) {
     const CameraUniforms cameraData = {
@@ -231,26 +274,6 @@ void Simulation::updateCameraUBO(const Camera& camera) {
     };
     glBindBuffer(GL_UNIFORM_BUFFER, cameraUBO);
     glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(CameraUniforms), &cameraData);
-}
-
-void Simulation::bindOutputTexture() {
-    glBindImageTexture(
-        0,                 // binding = 0
-        output_texture_id, // texture ID
-        0,                 // mipmap level (0 = base)
-        GL_FALSE,          // 3D/array texture? No
-        0,                 // if so, what layer?
-        GL_WRITE_ONLY,     // access
-        GL_RGBA8           // data format
-    );
-}
-
-void Simulation::dispatch(unsigned int row_count) {
-    const GLuint numGroupsX = (out_width + Config::WORKGROUP_SIZE_X - 1) / Config::WORKGROUP_SIZE_X;
-    const GLuint numGroupsY = (row_count + Config::WORKGROUP_SIZE_Y - 1) / Config::WORKGROUP_SIZE_Y;
-
-    glDispatchCompute(numGroupsX, numGroupsY, 1);
-    glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
 }
 
 void Simulation::updateSimUBO() {
@@ -288,55 +311,26 @@ void Simulation::updateDiskUBO() {
     }
 }
 
-// === PINN WEIGHTS: load binary weight files into SSBOs ===
-static bool loadWeightsFile(const std::string& path, unsigned int& ssbo, unsigned int binding,
-                            float& pos_scale, float& lmbda_scale, const std::string& label) {
-    std::ifstream file(path, std::ios::binary);
-    if (!file.is_open()) {
-        std::cout << "PINN " << label << " weights not found at " << path << std::endl;
-        return false;
-    }
-
-    int hidden_dim, layer_count, L;
-    file.read(reinterpret_cast<char*>(&hidden_dim), 4);
-    file.read(reinterpret_cast<char*>(&layer_count), 4);
-    file.read(reinterpret_cast<char*>(&L), 4);
-    file.read(reinterpret_cast<char*>(&pos_scale), 4);
-    file.read(reinterpret_cast<char*>(&lmbda_scale), 4);
-
-    int input_dim = 6 + 6 * 2 * L + 1;
-    int total_floats =
-        hidden_dim * input_dim + hidden_dim +
-        layer_count * (hidden_dim * hidden_dim + hidden_dim) +
-        3 * hidden_dim + 3;
-
-    std::vector<float> weights(total_floats);
-    file.read(reinterpret_cast<char*>(weights.data()), total_floats * sizeof(float));
-    file.close();
-
-    glGenBuffers(1, &ssbo);
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo);
-    glBufferData(GL_SHADER_STORAGE_BUFFER, total_floats * sizeof(float), weights.data(), GL_STATIC_READ);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, binding, ssbo);
-
-    std::cout << "PINN " << label << " loaded: hidden=" << hidden_dim
-              << " layers=" << layer_count
-              << " pos_scale=" << pos_scale
-              << " (" << total_floats * 4 / 1024 << " KB)" << std::endl;
-    return true;
+void Simulation::bindOutputTexture() {
+    glBindImageTexture(
+        0,                 // binding = 0
+        output_texture_id, // texture ID
+        0,                 // mipmap level (0 = base)
+        GL_FALSE,          // 3D/array texture? No
+        0,                 // if so, what layer?
+        GL_WRITE_ONLY,     // access
+        GL_RGBA8           // data format
+    );
 }
 
-void Simulation::initPinnWeights() {
-    bool far_ok = loadWeightsFile(Config::PINN_FAR_WEIGHTS_PATH, farWeightsSSBO, 5,
-                                   far_pos_scale, far_lmbda_scale, "far");
-    bool near_ok = loadWeightsFile(Config::PINN_NEAR_WEIGHTS_PATH, nearWeightsSSBO, 6,
-                                    near_pos_scale, near_lmbda_scale, "near");
-    pinn_weights_loaded = far_ok && near_ok;
-    if (!pinn_weights_loaded) {
-        std::cout << "PINN rendering disabled (missing weight files)" << std::endl;
-    }
+void Simulation::dispatch(unsigned int row_count) {
+    const GLuint numGroupsX = (out_width + Config::WORKGROUP_SIZE_X - 1) / Config::WORKGROUP_SIZE_X;
+    const GLuint numGroupsY = (row_count + Config::WORKGROUP_SIZE_Y - 1) / Config::WORKGROUP_SIZE_Y;
+
+    glDispatchCompute(numGroupsX, numGroupsY, 1);
+    glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
 }
-// === END PINN WEIGHTS ===
+
 
 void Simulation::step(const Camera& camera) {
     m_raytrace_shader->use();
@@ -349,13 +343,6 @@ void Simulation::step(const Camera& camera) {
 
     bindOutputTexture();
     dispatch(out_height);
-
-    // === DEBUG ===
-    GLenum err = glGetError();
-    if (err != GL_NO_ERROR) {
-        std::cout << "GL ERROR after step: " << err << std::endl;
-    }
-    // === END DEBUG ===
 }
 
 void Simulation::RenderPinnRows(const Camera& camera, unsigned int row_offset, unsigned int row_count) {
@@ -366,20 +353,23 @@ void Simulation::RenderPinnRows(const Camera& camera, unsigned int row_offset, u
 
     m_pinn_shader->SetInt("rowOffset", static_cast<int>(row_offset));
 
-    // === PINN WEIGHTS: set dual-model uniforms ===
     m_pinn_shader->SetFloat("far_pos_scale", far_pos_scale);
     m_pinn_shader->SetFloat("far_lmbda_scale", far_lmbda_scale);
     m_pinn_shader->SetFloat("near_pos_scale", near_pos_scale);
     m_pinn_shader->SetFloat("near_lmbda_scale", near_lmbda_scale);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, farWeightsSSBO);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, nearWeightsSSBO);
-    // === END PINN WEIGHTS ===
 
     updateCameraUBO(camera);
     updateSimUBO();
     updateDiskUBO();
     bindOutputTexture();
-    dispatch(row_count);
+
+    // PINN shader uses smaller workgroups (4x4) since the near-field model needs way more registers
+    const GLuint numGroupsX = (out_width + Config::PINN_WORKGROUP_SIZE_X - 1) / Config::PINN_WORKGROUP_SIZE_X;
+    const GLuint numGroupsY = (row_count + Config::PINN_WORKGROUP_SIZE_Y - 1) / Config::PINN_WORKGROUP_SIZE_Y;
+    glDispatchCompute(numGroupsX, numGroupsY, 1);
+    glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
 }
 
 void Simulation::ClearOutputTexture() {
@@ -413,10 +403,8 @@ void Simulation::UpdatePlanetsData(const std::vector<Utils::PlanetData>& planetD
 
     m_raytrace_shader->Set1iv("textureIndexMap", textureIndexMap);
 
-    // === PINN WEIGHTS: set same planet data on pinn shader ===
     m_pinn_shader->use();
     m_pinn_shader->Set1iv("textureIndexMap", textureIndexMap);
-    // === END PINN WEIGHTS ===
 }
 
 void Simulation::UpdateRadialHeightMap(const int num_rings, const float inner_radius, const float outer_radius) {
@@ -436,4 +424,3 @@ void Simulation::UpdateRadialHeightMap(const int num_rings, const float inner_ra
         m_radial_height_map[i] = 2.0f * std::sqrt(squared_val) - max_outer_height;
     }
 }
-

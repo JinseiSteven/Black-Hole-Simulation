@@ -2,12 +2,10 @@
 
 #define MAX_PLANETS 64
 
-// 8x8 = 64 invocations per work group
-layout (local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+// 4x4 = 16 invocations per work group
+layout (local_size_x = 4, local_size_y = 4, local_size_z = 1) in;
 
 layout(rgba8, binding = 0) uniform image2D imgOutput;
-
-uniform float time;
 
 layout(std140, binding = 1) uniform Camera {
     mat4 invProjectionMatrix;
@@ -44,30 +42,30 @@ layout(std140, binding = 4) uniform Planets {
 // the texture array sampler
 uniform sampler2DArray planetTextureArray;
 
-// the noise texture we use in order to give the disk "ripples"
-uniform sampler2D noiseTexture;
-
+// keeping track of what screenline(s)/row(s) we need to render rn
 uniform int rowOffset;
 
 // mapping the planets to their respective textures
 uniform int textureIndexMap[MAX_PLANETS];
 
-// === PINN WEIGHTS (SSBO) ===
 layout(std430, binding = 5) buffer FarWeights { float wf[]; };
 layout(std430, binding = 6) buffer NearWeights { float wn[]; };
 
+// the different scales we get from model training (needed for normalization)
 uniform float far_pos_scale;
 uniform float far_lmbda_scale;
 uniform float near_pos_scale;
 uniform float near_lmbda_scale;
-// === END PINN WEIGHTS ===
 
 const float PI = 3.14159265;
 const float HIT_THRESHOLD = 0.01f;
-const int PINN_MAX_STEP_COUNT = 10;  // reduced to avoid TDR timeout
+const int PINN_MAX_STEP_COUNT = 300;
 const float NEAR_FIELD_RADIUS = 10.0;  // matches R_SPLIT from training
+const float PINN_RS = 2.0;               // Rs used during PINN training
+const float PINN_MAX_RADIUS = 50.0;      // max reliable radius in PINN space
 
-// === PINN FORWARD PASS ===
+// yes these would normally be read from the binary weights file, but GLSL heavily prefers compile-time constants for loop bounds
+// so we just need to manually set these as to not break it
 #define PINN_INPUT_DIM 127  // 6 + 6*2*10 + 1
 #define PINN_L 10
 
@@ -86,14 +84,17 @@ void fourierEncode(vec3 npos, vec3 dir, float nlmbda, out float inp[PINN_INPUT_D
     int idx = 6;
     for (int l = 0; l < PINN_L; l++) {
         float freq = pow(2.0, float(l)) * PI;
-        for (int i = 0; i < 6; i++) {
+        for (int i = 0; i < 6; i++)
             inp[idx++] = sin(freq * spatial[i]);
+        for (int i = 0; i < 6; i++)
             inp[idx++] = cos(freq * spatial[i]);
-        }
     }
     inp[126] = nlmbda;
 }
 
+// we have 2 seperate functions for the model inference even though they use the exact same ordering/format. But this
+// is because we have to allocate the static 128 or 200 h_new, meaning if we combine them the far-field would also
+// need 200 registers even though it only uses 128, which is bad.
 // far-field: 128 hidden, 6 layers
 vec3 model_far(vec3 pos, vec3 dir, float lmbda) {
     vec3 npos = pos / far_pos_scale;
@@ -102,44 +103,47 @@ vec3 model_far(vec3 pos, vec3 dir, float lmbda) {
     float inp[PINN_INPUT_DIM];
     fourierEncode(npos, dir, nlmbda, inp);
 
+    // firstly we just have the regular input transform we apply
     float h[128];
-    int off = 0;
+    int offset = 0;
     for (int j = 0; j < 128; j++) {
         float sum = 0.0;
         for (int k = 0; k < PINN_INPUT_DIM; k++) {
-            sum += wf[off + j * PINN_INPUT_DIM + k] * inp[k];
+            sum += wf[offset + j * PINN_INPUT_DIM + k] * inp[k];
         }
-        h[j] = softplus(sum + wf[off + 128 * PINN_INPUT_DIM + j]);
+        h[j] = softplus(sum + wf[offset + 128 * PINN_INPUT_DIM + j]);
     }
-    off += 128 * PINN_INPUT_DIM + 128;
+    offset += 128 * PINN_INPUT_DIM + 128;
 
+    // next, we have our residual layers
     float h_new[128];
     for (int layer = 0; layer < 6; layer++) {
         for (int j = 0; j < 128; j++) {
             float sum = 0.0;
             for (int k = 0; k < 128; k++) {
-                sum += wf[off + j * 128 + k] * h[k];
+                sum += wf[offset + j * 128 + k] * h[k];
             }
-            h_new[j] = softplus(sum + wf[off + 128 * 128 + j]) + h[j];
+            h_new[j] = softplus(sum + wf[offset + 128 * 128 + j]) + h[j];       // here we add the residual/skip
         }
         for (int j = 0; j < 128; j++) h[j] = h_new[j];
-        off += 128 * 128 + 128;
+        offset += 128 * 128 + 128;
     }
 
+    // and lastly the out transform to get our xyz positions
     vec3 out_pos;
     for (int j = 0; j < 3; j++) {
         float sum = 0.0;
         for (int k = 0; k < 128; k++) {
-            sum += wf[off + j * 128 + k] * h[k];
+            sum += wf[offset + j * 128 + k] * h[k];
         }
-        out_pos[j] = sum + wf[off + 3 * 128 + j];
+        out_pos[j] = sum + wf[offset + 3 * 128 + j];
     }
 
-    return (out_pos + npos) * far_pos_scale;  // skip connection: network learns correction from input pos
+    // once again a skip connection, but this time from the input, so the network learns straight-line correction from input pos
+    return (out_pos + npos) * far_pos_scale;
 }
 
-// near-field: 200 hidden, 12 layers (DISABLED for testing)
-#if 0
+// near-field: 200 hidden, 12 layers
 vec3 model_near(vec3 pos, vec3 dir, float lmbda) {
     vec3 npos = pos / near_pos_scale;
     float nlmbda = lmbda / near_lmbda_scale;
@@ -180,11 +184,8 @@ vec3 model_near(vec3 pos, vec3 dir, float lmbda) {
         out_pos[j] = sum + wn[off + 3 * 200 + j];
     }
 
-    return (out_pos + npos) * near_pos_scale;  // skip connection: network learns correction from input pos
+    return (out_pos + npos) * near_pos_scale;
 }
-#endif
-
-// === END PINN FORWARD PASS ===
 
 struct RayState {
     vec3 pos_0;     // initial position (reset on phase switch)
@@ -200,18 +201,17 @@ RayState initRay(vec3 pos, vec3 dir) {
     ray.dir_0 = dir;
     ray.pos_i = pos;
     ray.lambda = 0;
-    ray.near = false;  // always start far-field (camera is far from BH)
+    ray.near = false;  // always start far-field (even if we are in the near-field, itll just switch quickly then)
     return ray;
 }
 
 float getDiskHeight(float r_disk) {
-
     if (r_disk < disk.innerRadius || r_disk > disk.outerRadius) {
         return 0.0;
     }
 
     // power-law flaring: H(r) = H0 * (r/r_inner)^beta
-    float beta = 1.2;  // Typical for accretion disks
+    float beta = 1.2;
     float H = disk.height * pow(r_disk / disk.innerRadius, beta);
 
     // taper off at the end, so no sharp cutoff
@@ -228,7 +228,8 @@ float diskSDF(vec3 pos) {
     float radial_dist = abs(r_xz - r_clamped);
 
     // vertical distance
-    float H = (disk.renderMode == 0) ? 0.01 : getDiskHeight(r_clamped);
+    float H = getDiskHeight(r_clamped);
+    if (H < 0.01) H = 0.01;
     float vertical_dist = abs(pos.y) - H;
 
     // inside radii, just vertical distance
@@ -260,126 +261,115 @@ float sceneSDF(vec3 pos) {
     return d;
 }
 
+// physics-correct scale which keeps Rs ratio so lensing is accurate
+float getScale() {
+    return sim.Rs / PINN_RS;
+}
+
+// we use this only to check where the ray will enter the "reliable" zone for the PINN we trained
+float raySphereEntry(vec3 origin, vec3 dir, float radius) {
+    float b = dot(origin, dir);
+    float c = dot(origin, origin) - radius * radius;
+    float disc = b * b - c;
+    if (disc < 0.0) return -1.0;  // no intersection
+    return -b - sqrt(disc);       // entry point (nearest)
+}
+
 void stepRay(inout RayState ray) {
     float d = sceneSDF(ray.pos_i);
     if (d < HIT_THRESHOLD) d = HIT_THRESHOLD;
-    ray.lambda += d;
 
-    // far-field only for now (near-field disabled for testing)
-    ray.pos_i = model_far(ray.pos_0, ray.dir_0, ray.lambda);
+    float scale = getScale();
+    float dlambda = d / scale;
+
+    ray.lambda += dlambda;
+
+    // both the models take PINN-space positions (Rs=2.0) and return PINN-space results
+    // they just handle their own internal normalization (pos_scale and lmbda_scale)
+    vec3 pinn_pos0 = ray.pos_0 / scale;
+    vec3 pinn_result;
+    if (ray.near) {
+        pinn_result = model_near(pinn_pos0, ray.dir_0, ray.lambda);
+    } else {
+        pinn_result = model_far(pinn_pos0, ray.dir_0, ray.lambda);
+    }
+    ray.pos_i = pinn_result * scale;
 }
 
-// DISABLED for testing — near-field causes register pressure / TDR
-#if 0
 void switchToNearField(inout RayState ray) {
-    float eps = 0.05;
-    vec3 p_fwd = model_far(ray.pos_0, ray.dir_0, ray.lambda + eps);
-    vec3 p_bwd = model_far(ray.pos_0, ray.dir_0, ray.lambda - eps);
-    vec3 vel = normalize((p_fwd - p_bwd) / (2.0 * eps));
+    // instead of having to do the actual differentiation, we are simply gonna do 2 forward passes, checking the difference
+    // and then calculating the velocity based on it
+    float scale = getScale();
+    float epsilon = 0.05;
+    vec3 pinn_pos0 = ray.pos_0 / scale;
+    vec3 p_fwd = model_far(pinn_pos0, ray.dir_0, ray.lambda + epsilon);
+    vec3 p_bwd = model_far(pinn_pos0, ray.dir_0, ray.lambda - epsilon);
+    vec3 vel = normalize((p_fwd - p_bwd) / (2.0 * epsilon));
+
+    // re-initialize the ray for near-field, using our current position and the newly calculated velocity
     ray.pos_0 = ray.pos_i;
     ray.dir_0 = vel;
     ray.lambda = 0.0;
     ray.near = true;
 }
-#endif
+
+void switchToFarField(inout RayState ray) {
+    // same as the near field one, but just in reverse
+    // its slightly expensive since we have to do 2 near-field inferences, but it makes up for it the more steps
+    // we would take outside the near-field zone
+    float scale = getScale();
+    float epsilon = 0.05;
+    vec3 pinn_pos0 = ray.pos_0 / scale;
+    vec3 p_fwd = model_near(pinn_pos0, ray.dir_0, ray.lambda + epsilon);
+    vec3 p_bwd = model_near(pinn_pos0, ray.dir_0, ray.lambda - epsilon);
+    vec3 vel = normalize((p_fwd - p_bwd) / (2.0 * epsilon));
+
+    ray.pos_0 = ray.pos_i;
+    ray.dir_0 = vel;
+    ray.lambda = 0.0;
+    ray.near = false;
+}
 
 vec4 getDiskMaterial(vec3 pos, float r_disk) {
     float normalized_r = (r_disk - disk.innerRadius) / (disk.outerRadius - disk.innerRadius);
     float T_linear = 1.0 - normalized_r;
     vec3 color = mix(disk.colorCool.rgb, disk.colorHot.rgb, clamp(T_linear, 0.0, 1.0));
     float geometry_fade = 1.0 - smoothstep(0.8, 1.0, normalized_r);
-
-    // simple mode - no noise texture (previously the commented-out version)
-    if (disk.useNoise == 0) {
-        return vec4(color, geometry_fade);
-    }
-
-    // animated noise mode
-    // didnt actually know this was a thing, but is faster than taking sqrt and breuk
-    float omega = inversesqrt(r_disk * r_disk * r_disk);
-
-    float GM_proxy = sqrt(sim.Rs * 0.5) * 5.0; // with a time scale factor lol
-
-    // angle change = angular velocity * time
-    float angle_offset = omega * GM_proxy * time * 10.0f;
-
-    float angle = atan(pos.z, pos.x);
-
-    // now we subtract the offset to rotate in the direction of particle orbit
-    angle -= angle_offset;
-
-    float noise_u = (angle + PI) / (2.0 * PI);
-    float noise_v = normalized_r;
-
-    // extra twist to seperate rings visually
-    float twist = 1.0 / (normalized_r + 0.2);
-    vec2 uv = vec2(noise_u + twist * 0.5, noise_v * 4.0); // TODO 4.0 now, needs to be calculated too but higher value gives thinner/more rings
-
-    float n1 = texture(noiseTexture, uv).r;
-    float n2 = texture(noiseTexture, uv * 2.0).r * 0.5;
-    float turbulence = (n1 + n2) / 1.5;
-
-    // exaggerate the opacity, so we get clearer transparent and opaque rings
-    float density_map = smoothstep(0.3, 0.7, turbulence);
-    float final_density = density_map * geometry_fade;
-
-    // TODO, vergeet deze niet lmao want dit moet ook anders
-    color *= (0.5 + 0.5 * density_map);
-
-    return vec4(color, final_density);
+    return vec4(color, geometry_fade);
 }
 
-bool checkDiskFlat(vec3 rayPos, vec3 prevPos, out vec4 finalColor) {
-    // we check whether the position change between a positive and negative y
-    if (rayPos.y * prevPos.y >= 0.0) {
-        return false;
+bool checkDiskIntersection(inout RayState ray, vec3 pos, vec3 prevPos, inout vec4 finalColor) {
+    // because the PINN makes such big steps, its important we have a check first to see whether the ray mightve
+    // crossed the y=0 barrier since then it might have intersected with the disk
+    if (pos.y * prevPos.y < 0.0) {
+        float t = prevPos.y / (prevPos.y - pos.y);
+        vec3 crossPoint = mix(prevPos, pos, t);
+        float r_disk = length(crossPoint.xz);
+
+        if (r_disk >= disk.innerRadius && r_disk <= disk.outerRadius) {
+            vec4 material = getDiskMaterial(crossPoint, r_disk);
+            vec3 rayStep = pos - prevPos;
+            float cos_angle = abs(rayStep.y) / length(rayStep);
+            float opacity = mix(1.0, material.a, cos_angle);
+            finalColor = vec4(material.rgb, opacity);
+            return true;
+        }
     }
 
-    // solve for t in order to get exact point of crossing
-    float t = prevPos.y / (prevPos.y - rayPos.y);
-    vec3 crossPoint = mix(prevPos, rayPos, t);
-
-    float r_disk = length(crossPoint.xz);
-
-    // if falling outside the disk radii, we can ignore
-    if (r_disk < disk.innerRadius || r_disk > disk.outerRadius) {
-        return false;
-    }
-
-    // temperature based color
-    finalColor = getDiskMaterial(crossPoint, r_disk);
-    return true;
-}
-
-bool checkDiskAngleBased(vec3 rayPos, vec3 prevPos, out vec4 finalColor) {
-    float r_disk = length(rayPos.xz);
+    // however sometimes the ray might not be crossing y=0 this cycle but it is contained inside the disk
+    // (so if it is travelling horizontally for example or was already inside)
+    float r_disk = length(pos.xz);
     float H = getDiskHeight(r_disk);
-
-    // checking if the ray falls within the disk height at radius r
-    if (abs(rayPos.y) < H) {
-        vec4 material = getDiskMaterial(rayPos, r_disk);
-
-        // however when looking at it from the side, we wan to compensate with extra opacity since the disk is a volumetric cloud
-        vec3 rayStep = rayPos - prevPos;
+    if (abs(pos.y) < H && r_disk >= disk.innerRadius && r_disk <= disk.outerRadius) {
+        vec4 material = getDiskMaterial(pos, r_disk);
+        vec3 rayStep = pos - prevPos;
         float cos_angle = abs(rayStep.y) / length(rayStep);
-
         float opacity = mix(1.0, material.a, cos_angle);
-
         finalColor = vec4(material.rgb, opacity);
         return true;
     }
 
-    finalColor = vec4(0.0);
     return false;
-}
-
-bool checkDiskIntersection(inout RayState ray, vec3 pos, vec3 prevPos, out vec4 finalColor) {
-    // flat disk
-    if (disk.renderMode == 0) {
-        return checkDiskFlat(pos, prevPos, finalColor);
-    }
-    // angle-based for all volumetric modes (raymarching not supported with PINN stepping)
-    return checkDiskAngleBased(pos, prevPos, finalColor);
 }
 
 vec2 getSphereUV(vec3 hitPos, vec3 center) {
@@ -415,7 +405,7 @@ vec3 findSurfaceHit(vec3 start, vec3 end, vec3 center, float radius) {
     return start + d * t;
 }
 
-bool checkPlanetIntersection(vec3 pos, vec3 prevPos, out vec4 finalColor) {
+bool checkPlanetIntersection(vec3 pos, vec3 prevPos, inout vec4 finalColor) {
     for (int i = 0; i < planets.numPlanets; i++) {
         vec4 planet = planets.planets[i];
         if (distance(pos, planet.xyz) < planet.w + HIT_THRESHOLD) {
@@ -429,7 +419,6 @@ bool checkPlanetIntersection(vec3 pos, vec3 prevPos, out vec4 finalColor) {
             vec3 lightDir = normalize(-hitPos);
             float diffuse = max(dot(normal, lightDir), sim.planetAmbientLight);
 
-            // 4. Combine
             finalColor = vec4(albedo * diffuse, 1.0f);
             return true;
         }
@@ -437,56 +426,83 @@ bool checkPlanetIntersection(vec3 pos, vec3 prevPos, out vec4 finalColor) {
     return false;
 }
 
-bool checkDiskSegment(vec3 prevPos, vec3 curPos, out vec4 finalColor) {
-    vec3 seg = curPos - prevPos;
-    if (abs(seg.y) < 1e-6) return false;
-
-    float t = -prevPos.y / seg.y;
-    if (t < 0.0 || t > 1.0) return false;
-
-    vec3 crossPoint = prevPos + seg * t;
-    float r_disk = length(crossPoint.xz);
-
-    if (r_disk < disk.innerRadius || r_disk > disk.outerRadius) return false;
-
-    finalColor = getDiskMaterial(crossPoint, r_disk);
-    return true;
-}
-
 vec4 traceRay(vec3 rayPos, vec3 rayDir) {
     vec4 finalColor = vec4(0.0, 0.0, 0.0, 1.0);
+
+    float scale = getScale();
+    float pinnZoneRadius = PINN_MAX_RADIUS * scale;  // radius where PINN is trained for
 
     RayState ray = initRay(rayPos, rayDir);
     vec3 prevPos = rayPos;
 
+    // phase 1: straight-line march until ray enters PINN zone (or hits something)
+    // since the rays far from the BH travel nearly straight, so this is physically accurate and a lot faster
+    if (length(rayPos) > pinnZoneRadius) {
+        // do need to find where the ray would enter the PINN-reliable radius/sphere
+        float t_entry = raySphereEntry(rayPos, rayDir, pinnZoneRadius);
+
+        // if the ray would never enter the zone, we check for hits along its path with a set big steps
+        if (t_entry < 0.0) {
+            for (int i = 0; i < 16; i++) {
+                float d = sceneSDF(ray.pos_i);
+                if (d < HIT_THRESHOLD) d = HIT_THRESHOLD;
+                ray.pos_i = ray.pos_i + rayDir * d;
+
+                if (length(ray.pos_i) < sim.Rs + HIT_THRESHOLD)
+                    return vec4(0.0, 0.0, 0.0, 1.0);
+                if (checkDiskIntersection(ray, ray.pos_i, prevPos, finalColor)) return finalColor;
+                if (checkPlanetIntersection(ray.pos_i, prevPos, finalColor)) return finalColor;
+                if (length(ray.pos_i) > sim.worldRadius) return finalColor;
+                prevPos = ray.pos_i;
+            }
+            return finalColor;
+        }
+
+        // else, we maarch straight to just before the PINN zone entry, checking for hits
+        vec3 entryPos = rayPos + rayDir * t_entry;
+        int straightSteps = 8;
+        float straightStepLen = t_entry / float(straightSteps);
+        for (int i = 0; i < straightSteps; i++) {
+            ray.pos_i = rayPos + rayDir * (straightStepLen * float(i + 1));
+            if (checkDiskIntersection(ray, ray.pos_i, prevPos, finalColor)) return finalColor;
+            if (checkPlanetIntersection(ray.pos_i, prevPos, finalColor)) return finalColor;
+            prevPos = ray.pos_i;
+        }
+
+        // now we initialize the ray again for PINN phase starting at the entry point
+        ray.pos_0 = entryPos;
+        ray.dir_0 = rayDir;
+        ray.pos_i = entryPos;
+        ray.lambda = 0.0;
+    }
+
+    // phase 2: PINN-guided tracing within the reliable zone
+    float nearFieldRadius = NEAR_FIELD_RADIUS * getScale();
+
+    if (length(ray.pos_i) < nearFieldRadius) {
+        ray.near = true;
+    }
+
     for (int i = 0; i < PINN_MAX_STEP_COUNT; i++) {
+        if (!ray.near && length(ray.pos_i) < nearFieldRadius) {
+            switchToNearField(ray);
+        } else if (ray.near && length(ray.pos_i) > nearFieldRadius) {
+            switchToFarField(ray);
+        }
         stepRay(ray);
 
-        // case 1: hit the black hole
         if (length(ray.pos_i) < sim.Rs + HIT_THRESHOLD) {
             return vec4(0.0, 0.0, 0.0, 1.0);
         }
-
-        // case 2: disk — analytical segment check
-        if (checkDiskSegment(prevPos, ray.pos_i, finalColor)) {
+        if (checkDiskIntersection(ray, ray.pos_i, prevPos, finalColor)) {
             break;
         }
-
-        // case 3: hit a planet
         if (checkPlanetIntersection(ray.pos_i, prevPos, finalColor)) {
             break;
         }
-
-        // case 4: ray out of bounds
         if (length(ray.pos_i) > sim.worldRadius && dot(ray.pos_i - prevPos, ray.pos_i) > 0.0) {
             break;
         }
-
-        // case 5: transition far -> near field (DISABLED — testing far-field only)
-        // if (!ray.near && length(ray.pos_i) < NEAR_FIELD_RADIUS) {
-        //     switchToNearField(ray);
-        // }
-
         prevPos = ray.pos_i;
     }
     return finalColor;

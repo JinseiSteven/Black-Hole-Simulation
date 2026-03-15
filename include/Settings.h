@@ -36,6 +36,7 @@ public:
 
     void SetOrbitSensitivity(float sensitivity);
     void SetZoomSensitivity(float sensitivity);
+    void SetVsync(bool enabled);
 
     // conversion
     [[nodiscard]] float RealToSim(double real_meters) const;
@@ -75,6 +76,7 @@ public:
 
     [[nodiscard]] float GetOrbitSensitivity() const { return m_camera.orbit_sensitivity; }
     [[nodiscard]] float GetZoomSensitivity() const { return m_camera.zoom_sensitivity; }
+    [[nodiscard]] bool GetVsync() const { return m_render.vsync; }
 
     [[nodiscard]] unsigned int GetSimulationVersion() const { return m_simulation_version; }
     [[nodiscard]] unsigned int GetDiskVersion() const { return m_disk_version; }
@@ -121,6 +123,7 @@ private:
         int radial_mesh_rings;
         int radial_mesh_spokes;
         bool enable_radial_mesh;
+        bool vsync;
         glm::vec4 radial_mesh_color;
     } m_render{};
 

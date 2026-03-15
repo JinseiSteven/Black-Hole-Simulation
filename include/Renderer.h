@@ -26,7 +26,7 @@ public:
         const char* gridFragmentPath);
     ~Renderer();
 
-    void draw() const;
+    void draw(bool skip_grid = false) const;
     void RebuildRadialMesh(int num_rings, int num_spokes, float inner_radius, float outer_radius);
     void UpdateRadialHeightmap(const std::vector<float>& radial_height_map) const;
 

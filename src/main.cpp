@@ -16,9 +16,3 @@ int main() {
     }
     return 0;
 }
-
-// TODO REMOVE?
-void framebuffer_size_callback(GLFWwindow* window, int width, int height)
-{
-    glViewport(0, 0, width, height);
-}

@@ -66,11 +66,6 @@ void UISystem::CreateWindows() {
             ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize |
             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize);
 
-        // TODO we also need to lock the actual save button until the render is done for this frame, since we dont want half-baked renders
-        if (ImGui::Button("Save")) {
-            // TODO
-        }
-        ImGui::SameLine();
         if (ImGui::Button("Back")) {
             m_pinn_view = false;
 
@@ -129,9 +124,17 @@ void UISystem::CreateWindows() {
             m_settings.SetDiskAbsorptionCoefficient(absorption);
         }
 
+        bool isRaymarched = m_settings.GetDiskRenderMode() == 2;
+        if (!isRaymarched) {
+            m_settings.SetDiskUseNoise(false);
+            ImGui::BeginDisabled();
+        }
         bool useNoise = m_settings.GetDiskUseNoise();
         if (ImGui::Checkbox("Animated Texture", &useNoise)) {
             m_settings.SetDiskUseNoise(useNoise);
+        }
+        if (!isRaymarched) {
+            ImGui::EndDisabled();
         }
 
         ImGui::Spacing();
@@ -197,6 +200,11 @@ void UISystem::CreateWindows() {
             m_settings.SetPlanetAmbientLight(ambient);
         }
 
+        bool vsync = m_settings.GetVsync();
+        if (ImGui::Checkbox("VSync (60 FPS cap)", &vsync)) {
+            m_settings.SetVsync(vsync);
+        }
+
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Text("%.1f FPS (%.2f ms)", m_io->Framerate, 1000.0f / m_io->Framerate);
@@ -205,8 +213,8 @@ void UISystem::CreateWindows() {
     ImGui::Spacing();
     ImGui::Separator();
     if (ImGui::Button("Render with PINN", ImVec2(-1, 0))) {
+        // we just flip this bool and the application render cycle will read it out
         m_pinn_view = true;
-        // TODO
     }
 
     ImGui::End();
@@ -224,7 +232,6 @@ void UISystem::SetupStyle() {
 
     ImGuiStyle& style = ImGui::GetStyle();
 
-    // rounded corners
     style.WindowRounding = 6.0f;
     style.FrameRounding = 4.0f;
     style.GrabRounding = 4.0f;
@@ -233,7 +240,6 @@ void UISystem::SetupStyle() {
     style.FramePadding = ImVec2(8, 4);
     style.ItemSpacing = ImVec2(8, 6);
 
-    // slight transparency
     style.Colors[ImGuiCol_WindowBg].w = 0.94f;
 
     // some nice accent color

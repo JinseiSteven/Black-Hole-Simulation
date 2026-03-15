@@ -41,6 +41,8 @@ Application::Application(const int screen_width, const int screen_height) :
         throw std::runtime_error("Render scale not supported. The render texture needs to be divisible by the GPU workgroups");
     }
     glfwSetWindowTitle(m_window.getWindow(), "Schwarzschild Black Hole Simulation");
+    m_window.SetIcon(Config::WINDOW_ICON_PATH.c_str());
+    glfwSwapInterval(m_settings.GetVsync() ? 1 : 0);
     m_simulation.UpdatePlanetsData(Utils::LoadPlanetsFromFile(Config::PLANETS_TXT_FILE));
     RebuildRadialMesh();
 }
@@ -70,7 +72,7 @@ void Application::Step() {
     m_ui_system.CreateWindows();
 
     // rendering
-    m_renderer.draw();
+    m_renderer.draw(m_ui_system.IsPinnView());
     m_ui_system.Draw();
 
     m_window.swapBuffers();
@@ -85,6 +87,7 @@ void Application::BaseRenderCycle(const float delta_time) {
     m_input_handler.Update(delta_time);
 
     if (m_settings.GetRenderVersion() != m_last_render_version) {
+        glfwSwapInterval(m_settings.GetVsync() ? 1 : 0);
         RebuildRadialMesh();
         m_last_render_version = m_settings.GetRenderVersion();
     }
@@ -102,6 +105,9 @@ void Application::PINNRenderCycle() {
         m_simulation.ClearOutputTexture();
     }
 
+    // we have setup the render cycle here so every frame, it renders some rows of the screen. Giving it a nice
+    // scanline kind of effect. Since the model inference takes quite a while for the entire screen and
+    // we dont want it to hang for super long while loading the frame.
     if (m_pinn_row_cursor >= m_simulation.GetRenderHeight()) return;
     unsigned int row_count = std::min(m_simulation.GetRenderHeight() - m_pinn_row_cursor, Config::SCAN_ROW_BATCH_SIZE);
     m_simulation.RenderPinnRows(m_camera, m_pinn_row_cursor, row_count);

@@ -35,6 +35,8 @@ Settings::Settings() {
     m_render.enable_radial_mesh = Config::DEFAULT_RADIAL_MESH_ENABLE;
     m_render.radial_mesh_color = Config::DEFAULT_RADIAL_MESH_COLOR;
 
+    m_render.vsync = true;
+
     m_camera.orbit_sensitivity = Config::BASE_CAMERA_ORBIT_SENSITIVITY;
     m_camera.zoom_sensitivity = Config::BASE_CAMERA_ZOOM_SENSITIVITY;
 
@@ -154,6 +156,13 @@ void Settings::SetDiskUseNoise(const bool use_noise) {
     if (m_disk.useNoise != use_noise) {
         m_disk.useNoise = use_noise;
         m_disk_version++;
+    }
+}
+
+void Settings::SetVsync(const bool enabled) {
+    if (m_render.vsync != enabled) {
+        m_render.vsync = enabled;
+        m_render_version++;
     }
 }
 

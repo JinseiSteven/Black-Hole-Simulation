@@ -10,6 +10,7 @@
 #include "Window.h"
 #include "InputState.h"
 #include "Config.h"
+#include "stb_image.h"
 
 
 Window::Window(const int width, const int height, const std::string& title, InputState& inputState) :
@@ -41,6 +42,16 @@ void Window::SetShouldClose(const bool value) const {
     glfwSetWindowShouldClose(m_window, value ? GLFW_TRUE : GLFW_FALSE);
 }
 
+void Window::SetIcon(const char* path) const {
+    int w, h, channels;
+    unsigned char* pixels = stbi_load(path, &w, &h, &channels, 4);
+    if (pixels) {
+        GLFWimage icon{w, h, pixels};
+        glfwSetWindowIcon(m_window, 1, &icon);
+        stbi_image_free(pixels);
+    }
+}
+
 void Window::SetCursorMode(const bool enabled) const {
     if (enabled) {
         glfwSetInputMode(m_window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
@@ -59,6 +70,7 @@ void Window::initGLFW(const std::string& title) {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+    glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
 
     m_window = glfwCreateWindow(
         m_width,

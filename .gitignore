@@ -104,6 +104,16 @@ imgui.ini
 *.temp
 *.bak
 
+# ==================== Personal / Generated ====================
+.obsidian/
+docs/
+
+# PyTorch training checkpoints (not needed at runtime, only the .bin exports are)
+*.pth
+
+# Old single-model weights (replaced by pinn_far.bin and pinn_near.bin)
+res/models/pinn_weights.bin
+
 # ==================== Keep These ====================
 # Your resource files
 !res/

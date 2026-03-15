@@ -23,6 +23,7 @@ public:
     void swapBuffers() const;
     void SetShouldClose(bool value) const;
     void SetCursorMode(bool enabled) const;
+    void SetIcon(const char* path) const;
 
     [[nodiscard]] GLFWwindow* getWindow() const { return m_window; }
     [[nodiscard]] int getWidth() const { return m_width; }

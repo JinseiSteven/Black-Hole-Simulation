@@ -263,7 +263,7 @@ void Renderer::CreateRadialMapTexture(const int rings) {
 }
 
 
-void Renderer::draw() const {
+void Renderer::draw(bool skip_grid) const {
     // draw the quad and draw the texture given by the simulation on the quad
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
@@ -276,7 +276,7 @@ void Renderer::draw() const {
     // ========================= Grid Rendering =========================
     // first we will draw the background 3d mesh for perspective
 
-    if (m_settings.IsRadialMeshEnabled()) {
+    if (m_settings.IsRadialMeshEnabled() && !skip_grid) {
         m_radial_shader->use();
 
         m_radial_shader->SetMat4("VPM", m_camera.GetViewProjectionMatrix());

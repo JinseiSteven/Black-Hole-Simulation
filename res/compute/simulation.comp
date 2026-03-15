@@ -63,7 +63,7 @@ struct RayState {
     // now, normally we would represent the vector in polar coordinates with theta, phi and r
     // however, due to our spherical symmetry assumption, we represent the trajectory of the
     // light ray on a 2D orbital plane. Which we can represent with a single angle psi and a radius r
-    // See notes on Conservation Laws for further explanation.
+    // See the obsidian notes on Conservation Laws for further explanation.
     float r;
     float psi;
 
@@ -135,6 +135,22 @@ Derivatives getDerivatives(float r, float L, float L2, float E2, inout float rad
     return derivatives;
 }
 
+float getDiskHeight(float r_disk) {
+
+    if (r_disk < disk.innerRadius || r_disk > disk.outerRadius) {
+        return 0.0;
+    }
+
+    // power-law flaring: H(r) = H0 * (r/r_inner)^beta
+    float beta = 1.2;  // typical for accretion disks as far as I could find, so hardcoded is fine
+    float H = disk.height * pow(r_disk / disk.innerRadius, beta);
+
+    // taper off at the end, so no sharp cutoff
+    float taper = 1.0 - smoothstep(disk.outerRadius * 0.8, disk.outerRadius, r_disk);
+
+    return H * taper;
+}
+
 void stepRay(inout RayState ray) {
     const float step_factor = 0.5f;
     const float min_step = 0.001f;
@@ -188,32 +204,40 @@ vec4 getDiskMaterial(vec3 pos, float r_disk) {
     }
 
     // animated noise mode
-    // didnt actually know this was a thing, but is faster than taking sqrt and breuk
-    float omega = inversesqrt(r_disk * r_disk * r_disk);
+    // (didnt actually know this was a thing, but is faster than taking sqrt and division)
+    float omega = inversesqrt(disk.outerRadius * disk.outerRadius * disk.outerRadius);
 
     float GM_proxy = sqrt(sim.Rs * 0.5) * 5.0; // with a time scale factor lol
 
     // angle change = angular velocity * time
     float angle_offset = omega * GM_proxy * time * 10.0f;
 
-    float angle = atan(pos.z, pos.x);
-
-    // now we subtract the offset to rotate in the direction of particle orbit
-    angle -= angle_offset;
-
+    float angle = atan(pos.z, pos.x) - angle_offset;
     float noise_u = (angle + PI) / (2.0 * PI);
-    float noise_v = normalized_r;
+    float noise_v = log(1.0 + normalized_r * 9.0) / log(10.0);
 
-    // extra twist to seperate rings visually
-    float twist = 1.0 / (normalized_r + 0.2);
-    vec2 uv = vec2(noise_u + twist * 0.5, noise_v * 4.0); // TODO 4.0 now, needs to be calculated too but higher value gives thinner/more rings
+    // extra twist to seperate rings visually, clamped so it doesnt alias to hell at the inner edge
+    float twist = min(1.0 / (normalized_r + 0.3), 1.5);
+    vec2 uv = vec2(noise_u + twist * 0.5, noise_v * 2.0);
 
-    float n1 = texture(noiseTexture, uv).r;
-    float n2 = texture(noiseTexture, uv * 2.0).r * 0.5;
-    float turbulence = (n1 + n2) / 1.5;
+    // mip level so we dont get moire in the compute shader (no dFdx/dFdy here sadly like in fragment shader :( )
+    // the lensed image above/below the BH is super compressed, so we check how far
+    // the disk sample is from a straight line camera->BH to detect it
+    vec3 cam_dir = normalize(-camera.PosCartesian.xyz);
+    float along = dot(pos, cam_dir);
+    float perp = length(pos - cam_dir * along);
+    float is_lensed = smoothstep(disk.outerRadius * 0.5, disk.innerRadius, perp);
+    float lod = clamp(is_lensed * 3.0 + twist * 0.3, 0.0, 4.0);
+
+    float turbulence = textureLod(noiseTexture, uv, lod).r;
 
     // exaggerate the opacity, so we get clearer transparent and opaque rings
     float density_map = smoothstep(0.3, 0.7, turbulence);
+
+    // fade noise out near the inner edge where the UV frequency is too high to look good
+    float inner_fade = smoothstep(0.0, 0.25, normalized_r);
+    density_map = mix(1.0, density_map, inner_fade);
+
     float final_density = density_map * geometry_fade;
 
     // TODO, vergeet deze niet lmao want dit moet ook anders
@@ -222,23 +246,7 @@ vec4 getDiskMaterial(vec3 pos, float r_disk) {
     return vec4(color, final_density);
 }
 
-float getDiskHeight(float r_disk) {
-
-    if (r_disk < disk.innerRadius || r_disk > disk.outerRadius) {
-        return 0.0;
-    }
-
-    // power-law flaring: H(r) = H0 * (r/r_inner)^beta
-    float beta = 1.2;  // Typical for accretion disks
-    float H = disk.height * pow(r_disk / disk.innerRadius, beta);
-
-    // taper off at the end, so no sharp cutoff
-    float taper = 1.0 - smoothstep(disk.outerRadius * 0.8, disk.outerRadius, r_disk);
-
-    return H * taper;
-}
-
-bool checkDiskFlat(vec3 rayPos, vec3 prevPos, out vec4 finalColor) {
+bool checkDiskFlat(vec3 rayPos, vec3 prevPos, inout vec4 finalColor) {
     // we check whether the position change between a positive and negative y
     if (rayPos.y * prevPos.y >= 0.0) {
         return false;
@@ -260,7 +268,7 @@ bool checkDiskFlat(vec3 rayPos, vec3 prevPos, out vec4 finalColor) {
     return true;
 }
 
-bool checkDiskAngleBased(vec3 rayPos, vec3 prevPos, out vec4 finalColor) {
+bool checkDiskAngleBased(vec3 rayPos, vec3 prevPos, inout vec4 finalColor) {
     float r_disk = length(rayPos.xz);
     float H = getDiskHeight(r_disk);
 
@@ -278,11 +286,10 @@ bool checkDiskAngleBased(vec3 rayPos, vec3 prevPos, out vec4 finalColor) {
         return true;
     }
 
-    finalColor = vec4(0.0);
     return false;
 }
 
-bool checkDiskRaymarching(vec3 entryPos, inout RayState ray, out vec4 finalColor) {
+bool checkDiskRaymarching(vec3 entryPos, inout RayState ray, inout vec4 finalColor) {
     // accumulated color values
     vec4 accumulated = vec4(0.0);
 
@@ -325,7 +332,7 @@ bool checkDiskRaymarching(vec3 entryPos, inout RayState ray, out vec4 finalColor
 }
 
 
-bool checkDiskIntersection(inout RayState ray, vec3 pos, vec3 prevPos, out vec4 finalColor) {
+bool checkDiskIntersection(inout RayState ray, vec3 pos, vec3 prevPos, inout vec4 finalColor) {
     // flat disk
     if (disk.renderMode == 0) {
         return checkDiskFlat(pos, prevPos, finalColor);
@@ -380,7 +387,7 @@ vec3 findSurfaceHit(vec3 start, vec3 end, vec3 center, float radius) {
     return start + d * t;
 }
 
-bool checkPlanetIntersection(vec3 pos, vec3 prevPos, out vec4 finalColor) {
+bool checkPlanetIntersection(vec3 pos, vec3 prevPos, inout vec4 finalColor) {
     for (int i = 0; i < planets.numPlanets; i++) {
         vec4 planet = planets.planets[i];
         if (distance(pos, planet.xyz) < planet.w) {
@@ -394,7 +401,6 @@ bool checkPlanetIntersection(vec3 pos, vec3 prevPos, out vec4 finalColor) {
             vec3 lightDir = normalize(-hitPos);
             float diffuse = max(dot(normal, lightDir), sim.planetAmbientLight);
 
-            // 4. Combine
             finalColor = vec4(albedo * diffuse, 1.0f);
             return true;
         }
@@ -404,7 +410,7 @@ bool checkPlanetIntersection(vec3 pos, vec3 prevPos, out vec4 finalColor) {
 
 vec4 traceRay(vec3 rayPos, vec3 rayDir) {
     // the initial ray will have alpha of zero so it is completely seethrough
-    vec4 finalColor = vec4(1.0f, 0.0f, 0.0f, 0.5f);
+    vec4 finalColor = vec4(0.0, 0.0, 0.0, 0.0);
 
     RayState ray = initRay(rayPos, rayDir);
     vec3 prevPos = rayPos;
@@ -415,19 +421,31 @@ vec4 traceRay(vec3 rayPos, vec3 rayDir) {
         stepRay(ray);
         vec3 pos = getCartesian(ray);
 
+        // we slowly build up the color of the pixel as we go along, so if we only scratch the accretion disk surface
+        // we dont immediatelly stop. Only really applicable to the accretion disk since the other objects
+        // do not have a lower opacity than 1
+
         // case 1: hit the black hole
         if (ray.r < sim.Rs) {
-            return vec4(0.0, 0.0, 0.0, 1.0);
+            finalColor.rgb += vec3(0.0) * (1.0 - finalColor.a);
+            finalColor.a = 1.0;
+            return finalColor;
         }
 
         // case 2: hit the accretion disk
-        if (checkDiskIntersection(ray, pos, prevPos, finalColor)) {
-            break;
+        vec4 diskColor = vec4(0.0);
+        if (checkDiskIntersection(ray, pos, prevPos, diskColor)) {
+            finalColor.rgb += diskColor.rgb * diskColor.a * (1.0 - finalColor.a);
+            finalColor.a += diskColor.a * (1.0 - finalColor.a);
+            if (finalColor.a > 0.99) break;
         }
 
         // case 3: hit a planet
-        if (checkPlanetIntersection(pos, prevPos, finalColor)) {
-            break;
+        vec4 planetColor = vec4(0.0);
+        if (checkPlanetIntersection(pos, prevPos, planetColor)) {
+            finalColor.rgb += planetColor.rgb * planetColor.a * (1.0 - finalColor.a);
+            finalColor.a += planetColor.a * (1.0 - finalColor.a);
+            if (finalColor.a > 0.99) break;
         }
 
         prevPos = pos;
