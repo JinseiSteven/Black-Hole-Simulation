@@ -60,6 +60,8 @@ graph LR
 ## Configuration
 The window size and ray tracing resolution can be changed in `include/Config.h`. By default the window is 1600x1200 with a `RENDER_SCALE` of 0.5, meaning the raytracer runs at 800x600 and the result is upscaled. Set `RENDER_SCALE` to 1.0 for full resolution (sharper but slower).
 
+Planets can be added, moved, or removed by editing `res/planets/base_planets.txt`. Each line defines a planet with `x, y, z, radius, texture`.
+
 ## Requirements
 - OpenGL 4.3+
 - GLFW 3.3+
@@ -83,6 +85,7 @@ cmake .. -G "Visual Studio 17 2022" -DCMAKE_TOOLCHAIN_FILE=[path to vcpkg]/scrip
 cmake --build . --config Release
 .\Release\black_hole_simulation.exe
 ```
+Replace "Visual Studio 17 2022" with your installed version, e.g. "Visual Studio 16 2019"
 
 ### Linux (Ubuntu/Debian)
 ```bash
@@ -128,6 +131,12 @@ res/planets/          Planet configuration
 external/imgui/       Dear ImGui
 external/stb_image/   stb_image
 ```
+
+## Possible Future Plans
+- I only trained the model for around 6 hours on a training set of 10 Million data points. I coud heavily increase the amount of training data and epochs to make the PINN perform a lot better, but I got  a bit bored honestly haha.
+- Currently I use a non-rotating Schwarzschild black hole which path actually has a proper solution, however I could upgrade this to a spinning Kerr black hole, or even multiple black holes which would not have a solution.
+- The PINN is currently way slower than doing the actual geodesics integration, however with more complex scenes (Kerr black hole, multiple interacting black holes) the performance gain would become bigger and bigger.
+- The PINN is able to work for any dynamic scene/objects as long as the black hole size stays consistent, meaning we could make the planets orbit or add other moving bodies.
 
 ## Acknowledgements
 - PINN approach based on [GravLensX](https://arxiv.org/abs/2507.15775)

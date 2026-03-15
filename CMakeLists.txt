@@ -58,3 +58,9 @@ target_include_directories(black_hole_simulation PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui
         ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui/backends
 )
+
+# copy res/ next to the executable so resource paths resolve correctly
+add_custom_command(TARGET black_hole_simulation POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_SOURCE_DIR}/res $<TARGET_FILE_DIR:black_hole_simulation>/res
+)
